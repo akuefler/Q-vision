@@ -16,7 +16,12 @@ class Trial():
         self.image = img
         self.trajs = trajs
 
-def sampleCat(n = 1000):
+def cropImage(img):
+    B = (img == 126).all(axis= 2)
+    xs, ys = np.where(np.invert(B) == True)
+    return img[xs[0]:xs[-1], ys[0]:ys[-1]]
+
+def sampleCAT(n = 1000):
     sample= []
 
     categories = os.listdir("./CATdata/Stimuli")[1:]
@@ -30,6 +35,12 @@ def sampleCat(n = 1000):
 
         for pick in picks:
             IMG = scipy.ndimage.imread('./CATdata/Stimuli/'+cat+'/'+stimDir[pick])
+
+            #Mild pre-processing
+            if len(IMG.shape) == 2:
+                IMG = np.expand_dims(IMG, 2)
+
+            IMG = cropImage(IMG)
             M = scipy.io.loadmat('./CATdata/FIXATIONTRAJS/'+cat+'/'+trajDir[pick])['cellVal'][0][0]
             trajs = {k[0][0][0][0][0]:k[0][0][0][1] for k in M}
 
@@ -37,7 +48,3 @@ def sampleCat(n = 1000):
             sample.append(t)
 
     return sample
-
-S= sampleCat(n= 100)
-
-halt= True
