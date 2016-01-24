@@ -1,11 +1,27 @@
 from loadData import sampleCAT
 from matplotlib import pyplot as plt
 import numpy as np
+import sklearn as sk
 import sklearn.decomposition as deco
+
+from sknn import mlp
+import logging
+logging.basicConfig()
 
 import math
 
-RADIUS = 15
+"""
+TODO:
+-Figure out how to scale fixation points when I downsample image.
+Probably as simple as changing the scale on the x/y axes.
+"""
+
+RADIUS = 25
+RTHRESH = 120 #Threshold to count as a reward region.
+
+REWARD = 10
+PUNISHMENT = -1
+GAMMA = 0.95
 
 def getPCA(sample, numWins, k):
     num_components = (2*RADIUS)**2
@@ -41,10 +57,12 @@ def getPCA(sample, numWins, k):
 
     return pca
 
+
 class Environment():
     def __init__(self, sample, pos):
         self.sample = sample
-        self.currImg = sample[0].image
+        self.currTrial = sample[0]
+        self.currImg = self.currTrial.image
 
         #State variables:
         #self.currWin = []
@@ -85,25 +103,63 @@ class Environment():
 
         #self.currWin = self.observe(self.currPos[0], self.currPos[1], self.radius)
 
-    def observe(self, x= None, y= None):
+    def observe(self, trial= None, x= None, y= None):
+        if trial == None:
+            trial = self.currTrial
+
+        img = trial.image
+        fixmap = trial.fixmap
+
         if x == None:
             x = self.currPos[0]
         if y == None:
             y = self.currPos[1]
 
+        print('x', x)
+        print('y', y)
+
         try: #Got a R/G/B image
-            #window = self.currImg[x-rad:x+rad, y-rad:y+rad, :]
-            window = self.currImg[y-RADIUS:y+RADIUS, x-RADIUS:x+RADIUS, :]
+            window = img[y-RADIUS:y+RADIUS, x-RADIUS:x+RADIUS, :]
+
             cm = None
+
         except IndexError: #Got a B/W image
-            #window = self.currImg[x-rad:x+rad, y-rad:y+rad]
-            window = self.currImg[y-RADIUS:y+RADIUS, x-RADIUS:x+RADIUS]
+            window = img[y-RADIUS:y+RADIUS, x-RADIUS:x+RADIUS]
+
             cm = 'Greys'
 
-        plt.imshow(window, cmap= cm, interpolation='nearest')
-        plt.show()
-        return window
+        r_region = fixmap[y-RADIUS:y+RADIUS, x-RADIUS:x+RADIUS]
+        if r_region.mean() > RTHRESH:
+            reward = REWARD
+        else:
+            reward = PUNISHMENT
 
+        #plt.imshow(window, cmap= cm, interpolation='nearest')
+        #plt.show()
+        return window, reward
+
+    def getHumanF(self):
+        F = []
+        for trial in self.sample:
+            #trial.visualize()
+
+            for subject, traj in trial.trajs.items():
+                for i, coord in enumerate(traj[:-1]):
+                    if np.isnan(traj[i+1]).any(): ##ISSUE: Maybe a better way to deal with nan
+                        continue
+
+                    trans= {}
+                    s, _ = self.observe(trial, x= coord[0], y= coord[1])
+                    trans['state'] = s
+                    trans['action'] = np.floor(coord) #NOTE: DISCRETIZE.
+                    succ, r = self.observe(trial, x= traj[i+1,0], y= traj[i+1,1])
+
+                    trans['reward'] = r
+                    trans['successor'] = succ
+
+                    F.append(trans)
+
+        return F
 
 class Agent():
     def __init__(self, environment, phi):
@@ -117,8 +173,34 @@ class Agent():
 
     def extractFeatures(self, window):
         win = window.flatten().reshape(1,-1)
-        state = self.phi.transform(win)
+        state = self.phi(win)
         return state
+
+    def NFQ(self, F, numIters = 1000):
+        L1 = mlp.Layer('Tanh', units= (2*RADIUS)**2 + 2)
+        L2 = mlp.Layer('Tanh', units= math.ceil(1.5*(2*RADIUS)**2 + 2))
+        L3 = mlp.Layer('Linear', units= 1)
+
+        classifier = mlp.Regressor([L1, L2, L3])
+
+        for i in range(numIters):
+            P = []
+            for trans in F:
+                #state = self.phi(trans['state'].flatten())
+                state = self.extractFeatures(trans['state'])
+                action = trans['action']
+
+                #ISSUE: Exhaustive search over all actions...
+                max_Q = -float('inf')
+                for r in range(10):
+                    for c in range(10):
+                        act = np.array([r, c]).reshape(1, -1)
+                        pred = classifier.predict(np.column_stack((state, act)))
+                        if pred > max_Q:
+                            max_Q = pred
+
+                target = trans['reward'] + GAMMA*max_Q#max(a, classifier)
+                P.append((np.concatenate((state, action)), target))
 
     def simulate(self):
         #for i in range(10):
@@ -129,21 +211,26 @@ class Agent():
             self.env.update(a)
 
 
-S = sampleCAT(130, size= 0.3, asgray= True, categories= ['Action', 'Indoor', 'Object', 'Affective'])
+S = sampleCAT(5, size= 1.0, asgray= True, categories= ['Action', 'Indoor', 'Object', 'Affective'])
 S1 = S[:10]
 S2 = S[10:]
+S1 = sampleCAT(10, size= 0.3, asgray= True, categories= ['Action', 'Indoor', 'Object', 'Affective'])
 try:
-    x, y, z = S[0].image.shape
+    x, y, z = S1[0].image.shape
 except:
-    x, y = S[0].image.shape
+    x, y = S1[0].image.shape
 
 x = math.floor(y/2.0)
 y = math.floor(x/2.0)
-
-pca = getPCA(S2, 10, 100)
 env = Environment(S1, [x, y])
+F = env.getHumanF()
 
-age = Agent(env, pca)
+#pca = getPCA(S2, 10, 100)
+#phi = lambda x: pca.transform(x)
+phi = lambda x: x
+
+age = Agent(env, phi)
+age.NFQ(F)
 age.simulate()
 
 #env.observe(x, y, 30)
