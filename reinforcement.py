@@ -28,39 +28,39 @@ REWARD = 10
 PUNISHMENT = -1
 GAMMA = 0.95
 
-def getPCA(sample, numWins, k):
-    num_components = (2*RADIUS)**2
-    num_samples = len(sample)*numWins
-    assert num_samples > num_components
+#def getPCA(sample, numWins, k):
+    #num_components = (2*RADIUS)**2
+    #num_samples = len(sample)*numWins
+    #assert num_samples > num_components
 
-    X = np.zeros((num_samples, num_components))
+    #X = np.zeros((num_samples, num_components))
 
-    #Create observation matrix:
-    for j, trial in enumerate(sample):
-        img = trial.image
-        try:
-            size_x, size_y, size_z = img.shape
-        except:
-            size_x, size_y = img.shape
+    ##Create observation matrix:
+    #for j, trial in enumerate(sample):
+        #img = trial.image
+        #try:
+            #size_x, size_y, size_z = img.shape
+        #except:
+            #size_x, size_y = img.shape
 
-        ys = np.random.randint(RADIUS, size_x-RADIUS, numWins)
-        xs = np.random.randint(RADIUS, size_y-RADIUS, numWins)
+        #ys = np.random.randint(RADIUS, size_x-RADIUS, numWins)
+        #xs = np.random.randint(RADIUS, size_y-RADIUS, numWins)
 
-        for i in range(numWins):
-            try:
-                cm = None
-                window = img[ys[i]-RADIUS:ys[i]+RADIUS, xs[i]-RADIUS:xs[i]+RADIUS, :]
-            except:
-                cm = 'Greys'
-                window = img[ys[i]-RADIUS:ys[i]+RADIUS, xs[i]-RADIUS:xs[i]+RADIUS]
+        #for i in range(numWins):
+            #try:
+                #cm = None
+                #window = img[ys[i]-RADIUS:ys[i]+RADIUS, xs[i]-RADIUS:xs[i]+RADIUS, :]
+            #except:
+                #cm = 'Greys'
+                #window = img[ys[i]-RADIUS:ys[i]+RADIUS, xs[i]-RADIUS:xs[i]+RADIUS]
 
-            X[i + numWins*j, :] = window.flatten()
+            #X[i + numWins*j, :] = window.flatten()
 
-    #Perform PCA
-    pca = deco.RandomizedPCA(n_components= k)
-    pca.fit(X)
+    ##Perform PCA
+    #pca = deco.RandomizedPCA(n_components= k)
+    #pca.fit(X)
 
-    return pca
+    #return pca
 
 
 class Environment():
@@ -246,6 +246,45 @@ class FeatureExtractor(object):
         """
         raise NotImplemented
 
+class pcaExtract(FeatureExtractor):
+    def train(self, sample, numWins):
+        #raise NotImplemented
+        num_components = (2*RADIUS)**2
+        num_samples = len(sample)*numWins
+        assert num_samples > num_components
+
+        X = np.zeros((num_samples, num_components))
+
+        #Create observation matrix:
+        for j, trial in enumerate(sample):
+            img = trial.image
+            try:
+                size_x, size_y, size_z = img.shape
+            except:
+                size_x, size_y = img.shape
+
+            ys = np.random.randint(RADIUS, size_x-RADIUS, numWins)
+            xs = np.random.randint(RADIUS, size_y-RADIUS, numWins)
+
+            for i in range(numWins):
+                try:
+                    cm = None
+                    window = img[ys[i]-RADIUS:ys[i]+RADIUS, xs[i]-RADIUS:xs[i]+RADIUS, :]
+                except:
+                    cm = 'Greys'
+                    window = img[ys[i]-RADIUS:ys[i]+RADIUS, xs[i]-RADIUS:xs[i]+RADIUS]
+
+                X[i + numWins*j, :] = window.flatten()
+
+        #Perform PCA
+        pca = deco.RandomizedPCA(n_components= self.D)
+        pca.fit(X)
+
+        self.pca = pca
+
+    def transform(self, X):
+        return self.pca.transform(X)
+
 class IdentityExtract(FeatureExtractor):
     def transform(self, X):
         return X
@@ -267,65 +306,50 @@ class Agent():
         state = self.phi.transform(win)
         return state
 
-    def cacla(self):
-        c_batch_size = 5
+    def cacla(self, c_batch_size):
+        eps = 100
 
-        eps = 40
-
-        actor = SigNet(self.D, hidden_size= self.D*2, output_size= 2, batch_size= 50)
+        actor = SigNet(self.D, hidden_size= self.D*2, output_size= 2, batch_size= c_batch_size)
         critic = EuclidNet(self.D, hidden_size= self.D*2, output_size= 1, batch_size= c_batch_size)
 
         while True:
 
-            deltas = np.zeros(c_batch_size)
-            X_train = np.empty((c_batch_size, self.D))
-            Y_train = np.empty((c_batch_size, 1))
+            deltas = np.zeros((c_batch_size)) #Change to empty for speed-up.
+            X = np.zeros((c_batch_size, self.D))
+
+            #true_acts = np.zeros((c_batch_size, 2))
+            noise_acts = np.zeros((c_batch_size, 2))
 
             #Should vectorize this...
-            #for i in range(c_batch_size):
-                #window, _ = self.env.observe()
-                #state = self.extractFeatures(window)
-                #a = actor.predict(state)
-                #a += np.random.normal(a, eps, 2)
+            for i in range(c_batch_size):
+                window, _ = self.env.observe()
+                state = self.extractFeatures(window)
+                X[i] = state
 
-                #self.env.update(a[0])
-                #window, r = self.env.observe()
-                #succ = self.extractFeatures(window)
+                #Noise the action in such a way that it remains in the percentage.
+                a = actor.predict(state)
+                print("Actor predicted: ", a)
+                a = np.random.normal(a * (self.env.M, self.env.N), eps, 2) / (self.env.M , self.env.N) #ISSUE: Flip?
+                a = np.maximum(np.minimum(a, 1),0).reshape(1, 2)
+                print("Exploratory action: ", a)
 
-                #deltas[i] = r + GAMMA * critic.predict(succ) - critic.predict(state)
+                noise_acts[i] = a
+
+                self.env.update(a[0])
+                window, r = self.env.observe()
+                succ = self.extractFeatures(window)
+
+                deltas[i] = r + GAMMA * critic.predict(succ) - critic.predict(state)
 
             #critic.train(X_train, Y_train, deltas= deltas, batch_size= c_batch_size)
+            X = sk.preprocessing.scale(X)
+            critic.weight_update(X, deltas.reshape(c_batch_size,1))
+            actor.weight_update(X[deltas > 0], noise_acts[deltas > 0])
 
-            window, _ = self.env.observe()
-            state = self.extractFeatures(window)
-            a = actor.predict(state)
-
-            a * (self.env.N, self.env.M)
-
-            a = np.random.normal(a * (self.env.N, self.env.M), eps, 2) / (self.env.M , self.env.N) #ISSUE: Flip?
-            a = np.maximum(np.minimum(a, 1),0).reshape(1, 2)
-
-            self.env.update(a[0])
+            print('a: ', a)
+            print('value: ', critic.predict(state))
+            print('action: ', actor.predict(state))
             window, r = self.env.observe(display= True)
-            succ = self.extractFeatures(window)
-
-            delta = r + GAMMA * critic.predict(succ) - critic.predict(state)
-
-            #Don't use anything for y. Need to compute gradient of network, not gradient of loss.
-            #critic.weight_update(state, np.array([[r]]), delta[0][0]) #ISSUE: Should I use r for y?
-            y = r + GAMMA * critic.predict(succ)
-            critic.weight_update(state, y)
-
-            print("a: ", a)
-            print("Value: ", critic.predict(state))
-            print("Delta: ", delta[0][0])
-
-            if delta > 0:
-                diff = np.linalg.norm(actor.predict(state) - a)
-                actor.weight_update(state, a)
-
-                print("Action: ", actor.predict(state))
-                print("Diff: ", diff)
 
 
     def simulate(self):
@@ -339,13 +363,13 @@ class Agent():
 
 #mlp = TwoLayerNet(loss_layer=euclid_log_loss)
 
-S = sampleCAT(5, size= 1.0, asgray= True, categories= ['Action', 'Indoor', 'Object', 'Affective'])
+S = sampleCAT(100, size= 1.0, asgray= True, categories= ['Action', 'Indoor', 'Object', 'Affective'])
 #for trial in S:
     #trial.removeInvalid()
 
 S1 = S[:10]
 S2 = S[10:]
-S1 = sampleCAT(10, size= 0.3, asgray= True, categories= ['Action', 'Indoor', 'Object', 'Affective'])
+#S1 = sampleCAT(10, size= 0.3, asgray= True, categories= ['Action', 'Indoor', 'Object', 'Affective'])
 try:
     x, y, z = S1[0].image.shape
 except:
@@ -361,9 +385,11 @@ D = env.getEpisodes()
 #phi = lambda x: x
 
 phi = IdentityExtract((2*RADIUS)**2)
+#phi = pcaExtract(100)
+#phi.train(S2, 30)
 
 age = Agent(env, phi)
-age.cacla()
+age.cacla(c_batch_size = 100)
 #age.train(D)
 #age.simulate()
 
