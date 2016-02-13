@@ -7,6 +7,7 @@ from matplotlib import pyplot as plt
 
 import math
 
+import sklearn as sk
 import scipy
 import scipy.io
 import scipy.ndimage
@@ -14,12 +15,15 @@ import scipy.ndimage
 ##ISSUE: should do more pre-processing. Subtract mean images. etc.
 
 class Trial():
-    def __init__(self, cat, idx, img, fixmap, trajs):
+    def __init__(self, cat, idx, img, fixmap, trajs, center_fm= True):
         self.category = cat
         self.index = idx
 
         self.image = img
         self.fixmap = fixmap
+        if center_fm: #ISSUE: Change this when add in color channels?
+            fm = fixmap.astype(float)
+            self.fixmap = (fm - fm.mean())/fm.std()
 
         self.trajs = trajs
 
@@ -29,13 +33,41 @@ class Trial():
             self.trajs[key] -= np.mean(self.trajs[key], axis= 0)
             self.trajs[key] += self.imageCenter
 
-    def visualize(self, displayFix= False):
+    def removeInvalids(self):
+        r, c = self.image.shape
+        for sub, traj in self.trajs.items():
+            tOld = traj.copy()
+
+            if np.isnan(traj).any():
+                self.trajs.pop(sub)
+                continue
+
+            #self.trajs[sub] = traj[np.logical_not(np.logical_and(traj[:,0] >= c, traj[:,1] >= r))]
+            #self.trajs[sub] = traj[np.logical_not(np.logical_and(traj[:,0] <= 0, traj[:,1] <= 0))]
+            traj = np.delete(traj, np.nonzero(traj[:,0] < 0), axis= 0)
+            traj = np.delete(traj, np.nonzero(traj[:,1] < 0), axis= 0)
+
+            traj = np.delete(traj, np.nonzero(traj[:,0] >= c), axis= 0)
+            traj = np.delete(traj, np.nonzero(traj[:,1] >= r), axis= 0)
+
+            self.trajs[sub] = traj
+
+            #self.visualize(subject= sub)
+            #halt= True
+
+        halt= True
+
+    def visualize(self, displayFix= False, subject= None):
         if displayFix is True:
             im = self.fixmap
         else:
             im = self.image
 
-        traj = self.trajs.values()[0]
+        if subject == None:
+            traj = self.trajs.values()[0]
+        else:
+            traj = self.trajs[subject]
+
         center = self.imageCenter
 
         plt.imshow(im, cmap= 'Greys', interpolation='nearest')
@@ -43,6 +75,17 @@ class Trial():
         plt.scatter(traj[:,0], traj[:,1], c= 'r')
         #plt.scatter(traj[:,1], traj[:,0], c= 'b')
         plt.show()
+
+
+class Episode():
+    def __init__(self, rollout, trial = None, subject= None):
+        self.rollout = rollout
+        self.trial = trial
+        self.subject = subject
+
+        self.R = 0.0
+        for tran in rollout:
+            self.R += tran['reward']
 
 
 def cropImage(img):
@@ -86,9 +129,11 @@ def sampleCAT(n = 1000, size= 1.0, asgray= False, categories= None):
             #fixmap = scipy.misc.imresize(fixmap, size)
 
             M = scipy.io.loadmat('./CATdata/FIXATIONTRAJS/'+cat+'/'+trajDir[pick])['cellVal'][0][0]
-            trajs = {k[0][0][0][0][0]:k[0][0][0][1] for k in M}
+            trajs = {k[0][0][0][0][0]:k[0][0][0][1] for k in M if k[0][0][0][1].size != 0}
 
             t = Trial(cat, trajDir[pick].split('.')[0], IMG, fixmap, trajs)
+            t.removeInvalids() #ISSUE: Assumption
+
             sample.append(t)
 
     return sample
