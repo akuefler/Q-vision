@@ -68,6 +68,7 @@ class Environment():
         self.sample = sample
         self.currTrial = sample[0]
         self.currImg = self.currTrial.image
+        self.currFixmap = self.currTrial.fixmap
 
         self.N, self.M = self.currImg.shape
 
@@ -95,11 +96,11 @@ class Environment():
 
         return legalActions
 
-    def update(self, act):
-        self.currPos = act
-        self.currPos = np.floor(act * (self.M, self.N)) #ISSUE: Flip N and M?
+    #def update(self, act):
+        #self.currPos = act
+        #self.currPos = np.floor(act * (self.M, self.N)) #ISSUE: Flip N and M?
 
-        assert self.currPos.size != 0
+        #assert self.currPos.size != 0
 
         #if act == 'up':
             #self.currPos[0] += self.step_size
@@ -115,23 +116,20 @@ class Environment():
 
         #self.currWin = self.observe(self.currPos[0], self.currPos[1], self.radius)
 
-    def observe(self, trial= None, x= None, y= None, subject= None, display= False):
+    #def observe(self, trial= None, x= None, y= None, subject= None, display= False):
+    def observe(self, act, trial= None, subject= None, display= None):
         if trial == None:
             trial = self.currTrial
 
         img = trial.image
         fixmap = trial.fixmap
 
-        if x == None:
-            x = self.currPos[0]
-        if y == None:
-            y = self.currPos[1]
+        #if x == None:
+            #x = self.currPos[0]
+        #if y == None:
+            #y = self.currPos[1]
 
-        #print('x', x)
-        #print('y', y)
-        #DISCRETIZE x and y:
-        x = np.floor(x)
-        y = np.floor(y)
+        x, y = np.floor(act * np.array([self.M, self.N]))
 
         yStart = max(0, y-RADIUS)
         xStart = max(0, x-RADIUS)
@@ -150,10 +148,11 @@ class Environment():
             cm = 'Greys'
 
         r_region = fixmap[y-RADIUS:y+RADIUS, x-RADIUS:x+RADIUS]
-        if r_region.mean() > RTHRESH:
-            reward = REWARD
-        else:
-            reward = PUNISHMENT
+        reward = r_region.mean()
+        #if r_region.mean() > RTHRESH:
+            #reward = REWARD
+        #else:
+            #reward = PUNISHMENT
 
         #plt.imshow(window, cmap= cm, interpolation='nearest')
         #plt.show()
@@ -174,8 +173,13 @@ class Environment():
         if window.shape != (2*RADIUS, 2*RADIUS): #ISSUE: Not best way to do this...
             window = np.resize(window, (2*RADIUS, 2*RADIUS))
 
-        if display == True:
-            plt.imshow(self.currImg, cmap= cm, interpolation='nearest')
+        if display is not None:
+            if display == 'img':
+                disp = img
+            elif display == 'fixmap':
+                disp = fixmap
+
+            plt.imshow(disp, cmap= cm, interpolation='nearest')
             plt.scatter(x, y)
             plt.show()
 
@@ -192,17 +196,25 @@ class Environment():
                     if np.isnan(traj[i+1]).any(): ##ISSUE: Maybe a better way to deal with nan
                         continue
                     trans= {}
-                    s, _ = self.observe(trial, x= coord[0], y= coord[1])
+
+                    act_x = coord[0] / float(self.M)
+                    act_y = coord[1] / float(self.N)
+
+                    s, _ = self.observe(act= [act_x, act_y], trial= trial)
                     if s.size == 0:
                         continue ##ISSUE: What causes some of these
 
                     assert s.shape == (2*RADIUS, 2*RADIUS)
-
                     trans['state'] = s
-                    #trans['action'] = coord
-                    trans['action'] = np.array([ traj[i+1,0], traj[i+1,1]])
-                    #trans['action'] = np.floor(coord) #NOTE: DISCRETIZE.
-                    succ, r = self.observe(trial, x= traj[i+1,0], y= traj[i+1,1], subject= subject)
+
+                    act_x_next = traj[i+1, 0] / float(self.M)
+                    act_y_next = traj[i+1, 1] / float(self.N)
+
+                    #print('act_x_next: ', act_x_next)
+                    #print('act_y_next: ', act_y_next)
+
+                    trans['action'] = np.array([act_x_next, act_y_next])
+                    succ, r = self.observe(act= [act_x_next, act_y_next], trial= trial, subject= subject)
                     trans['reward'] = r
                     trans['successor'] = succ
 
@@ -306,15 +318,52 @@ class Agent():
         state = self.phi.transform(win)
         return state
 
-    def cacla(self, c_batch_size):
+    def getCriticX(self, human_data, shuffle= True):
+        X = None
+        Y = None
+        for ep in human_data:
+            for tran in ep.rollout:
+                x = self.extractFeatures(tran['state'])
+                y = np.array([tran['reward']])
+                if X is None:
+                    X = x
+                else:
+                    X = np.row_stack((X, x))
+
+                if Y is None:
+                    Y = y
+                else:
+                    Y = np.concatenate((Y,y))
+
+        if shuffle:
+            p = np.random.permutation(range(len(Y)))
+            X = X[p]
+            Y = Y[p]
+
+        return X, Y
+
+
+
+    def cacla(self, human_data, c_batch_size, num_epochs= 10):
         eps = 100
 
         actor = SigNet(self.D, hidden_size= self.D*2, output_size= 2, batch_size= c_batch_size)
-        critic = EuclidNet(self.D, hidden_size= self.D*2, output_size= 1, batch_size= c_batch_size)
+        #critic = EuclidNet(self.D, hidden_size= self.D*2, output_size= 1, batch_size= c_batch_size)
+        critic = EuclidNet(self.D, hidden_size= 300, output_size= 1, batch_size= c_batch_size)
 
-        while True:
+        #Pre-train critic on human data.
+        #A, b = self.getCriticX(human_data)
+        #N = A.shape[0]
+        #N_2third = np.floor(2*N/3.0)
+        #A_train, b_train = A[:N_2third], b[:N_2third]
+        #A_val, b_val = A[N_2third:], b[N_2third:]
+        #critic.train(A_train, b_train[np.newaxis].T, A_val, b_val[np.newaxis].T, num_epochs= 5)
 
+        #CACLA
+        rewards = []
+        for k in range(50):
             deltas = np.zeros((c_batch_size)) #Change to empty for speed-up.
+            critic_y = np.zeros((c_batch_size))
             X = np.zeros((c_batch_size, self.D))
 
             #true_acts = np.zeros((c_batch_size, 2))
@@ -322,34 +371,42 @@ class Agent():
 
             #Should vectorize this...
             for i in range(c_batch_size):
-                window, _ = self.env.observe()
+                window, _ = self.env.observe(act= np.random.uniform(0, 1, 2))
                 state = self.extractFeatures(window)
                 X[i] = state
 
                 #Noise the action in such a way that it remains in the percentage.
                 a = actor.predict(state)
-                print("Actor predicted: ", a)
+                #print("Actor predicted: ", a)
                 a = np.random.normal(a * (self.env.M, self.env.N), eps, 2) / (self.env.M , self.env.N) #ISSUE: Flip?
                 a = np.maximum(np.minimum(a, 1),0).reshape(1, 2)
-                print("Exploratory action: ", a)
+                #print("Exploratory action: ", a)
 
                 noise_acts[i] = a
 
-                self.env.update(a[0])
-                window, r = self.env.observe()
+                #self.env.update(a[0])
+                window, r = self.env.observe(act= a[0])
                 succ = self.extractFeatures(window)
 
                 deltas[i] = r + GAMMA * critic.predict(succ) - critic.predict(state)
+                #critic_y[i] = r + GAMMA * critic.predict(succ)
+                critic_y[i] = r
+
+                #print('r: ', r)
 
             #critic.train(X_train, Y_train, deltas= deltas, batch_size= c_batch_size)
             X = sk.preprocessing.scale(X)
-            critic.weight_update(X, deltas.reshape(c_batch_size,1))
-            actor.weight_update(X[deltas > 0], noise_acts[deltas > 0])
+            for epoch in range(num_epochs):
+                critic.weight_update(X, critic_y.reshape(c_batch_size,1))
+                actor.weight_update(X[deltas > 0], noise_acts[deltas > 0])
 
-            print('a: ', a)
-            print('value: ', critic.predict(state))
-            print('action: ', actor.predict(state))
-            window, r = self.env.observe(display= True)
+            window, r = self.env.observe(act= actor.predict(state)[0], display= 'fixmap')
+            rewards.append(r)
+            print("Iteration: ", k)
+            print("GOT REWARD: ", r)
+
+        plt.plot(rewards)
+        halt= True
 
 
     def simulate(self):
@@ -389,7 +446,7 @@ phi = IdentityExtract((2*RADIUS)**2)
 #phi.train(S2, 30)
 
 age = Agent(env, phi)
-age.cacla(c_batch_size = 100)
+age.cacla(D, c_batch_size = 100)
 #age.train(D)
 #age.simulate()
 
