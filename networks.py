@@ -229,3 +229,41 @@ class ConvBaseline(NeuralNet):
         self.network = l_out
 
         self.initiliaze(mode= 'classify')
+
+
+class ConvLSTM(NeuralNet):
+    def __init__(self, height, width, channels, timesteps, hidden_size, output_size, batch_size, num_convpools= 2, num_filters= 5):
+        NeuralNet.__init__(self)
+        self.batch_size = batch_size
+
+        tensor5 = T.TensorType('float64', [False]*5)
+        self.x = tensor5('inputs')
+        self.y = T.lvector('targets')
+        self.layers = []
+
+        n_batch, n_steps, n_channels, width, height = (batch_size, timesteps, channels, width, height)
+        n_out_filters = 7
+        filter_shape = (3, 3)
+
+        l_in = lasagne.layers.InputLayer(
+             (n_batch, n_steps, n_channels, width, height),
+             input_var= self.x)
+        l_in_to_hid = lasagne.layers.Conv2DLayer(
+             lasagne.layers.InputLayer((None, n_channels, width, height)),
+             n_out_filters, filter_shape, pad='same')
+        l_hid_to_hid = lasagne.layers.Conv2DLayer(
+             lasagne.layers.InputLayer(l_in_to_hid.output_shape),
+             n_out_filters, filter_shape, pad='same')
+        l_rec = lasagne.layers.CustomRecurrentLayer(
+             l_in, l_in_to_hid, l_hid_to_hid)
+
+        l_reshape = lasagne.layers.ReshapeLayer(l_rec, (n_batch * n_steps, np.prod(l_rec.output_shape[2:])))
+
+        l_out = lasagne.layers.DenseLayer(
+            l_reshape, num_units= output_size,
+            nonlinearity=lasagne.nonlinearities.linear)
+
+        self.layers = [l_in, l_rec, l_out]
+        self.network = l_out
+
+        self.initiliaze(mode= 'classify')
