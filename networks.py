@@ -8,7 +8,17 @@ import lasagne
 
 from collections import OrderedDict
 
-def iterate_minibatches(inputs, targets, batchsize):
+import sklearn as sk
+from sklearn import metrics as mets
+
+UNTIL_LOSS = 0.7
+
+def iterate_minibatches(inputs, targets, batchsize, shuffle= True):
+    if shuffle:
+        p = np.random.permutation(range(inputs.shape[0]))
+        inputs = inputs[p]
+        targets = targets[p]
+
     mini_batches = []
     Dx = inputs.ndim
     Dy = targets.ndim
@@ -57,28 +67,28 @@ class NeuralNet(object):
         """
         #Training parameters:
         if mode == 'regress':
-            loss = lasagne.objectives.squared_error(lasagne.layers.get_output(self.network), self.y)
-            loss = loss.mean()
+            loss = lasagne.objectives.squared_error(lasagne.layers.get_output(self.network, deterministic= False), self.y)
+            loss = loss.mean() + self.penalty
 
             test_prediction = lasagne.layers.get_output(self.network, deterministic= True)
             test_loss = lasagne.objectives.squared_error(test_prediction, self.y)
-            test_loss = test_loss.mean()
+            test_loss = test_loss.mean() + self.penalty
         elif mode == 'classify':
             #loss = lasagne.objectives.categorical_crossentropy(lasagne.layers.get_output(self.network), self.y)
-            loss = lasagne.objectives.multiclass_hinge_loss(lasagne.layers.get_output(self.network), self.y)
-            loss = loss.mean()
+            loss = lasagne.objectives.multiclass_hinge_loss(lasagne.layers.get_output(self.network, deterministic= False), self.y)
+            loss = loss.mean() + self.penalty
 
             test_prediction = lasagne.layers.get_output(self.network, deterministic= True)
             test_loss = lasagne.objectives.multiclass_hinge_loss(test_prediction, self.y)
-            test_loss = test_loss.mean()
+            test_loss = test_loss.mean() + self.penalty
         elif mode == 'sequence':
             ##Only consider last label of the sequence?
-            loss = lasagne.objectives.multiclass_hinge_loss(lasagne.layers.get_output(self.network), self.y)
-            loss = loss.mean()
+            loss = lasagne.objectives.multiclass_hinge_loss(lasagne.layers.get_output(self.network, deterministic= False), self.y)
+            loss = loss.mean() + self.penalty
 
             test_prediction = lasagne.layers.get_output(self.network, deterministic= True)
             test_loss = lasagne.objectives.multiclass_hinge_loss(test_prediction, self.y)
-            test_loss = test_loss.mean()
+            test_loss = test_loss.mean() + self.penalty
 
         else:
             assert False
@@ -88,13 +98,32 @@ class NeuralNet(object):
         #updates = lasagne.updates.nesterov_momentum(
         #    loss, params, learning_rate= 1e-7, momentum= 0.9)
         #updates = lasagne.updates.sgd(loss, params, learning_rate= 1e-5)
-        updates = lasagne.updates.adam(loss, params, learning_rate= 1e-5)
+        updates = lasagne.updates.adam(loss, params, learning_rate= 1e-4)
+        #updates = lasagne.updates.adam(loss, params, learning_rate= 8e-4)
 
         ##Methods:
         self.weight_update = theano.function(inputs= [self.x, self.y], outputs= loss, updates= updates)
         #self.weight_update = theano.function(inputs= [self.x, self.y], outputs= self.loss(self.x, self.y), updates= updates)
         self.validate = theano.function([self.x, self.y], [test_loss])
         self.predict = theano.function([self.x], lasagne.layers.get_output(self.network))
+
+    def print_accuracy(self, X, Y):
+        N = X.shape[0]
+        batch_size = 200
+        accs = []
+        for i in range(0, N, batch_size):
+            #print("batch: ", i)
+            x = X[i:i+batch_size]
+            y = Y[i:i+batch_size]
+
+            Xout = self.predict(x)
+            Xpred = Xout.argmax(axis = 1)
+            acc = mets.accuracy_score(Xpred, y)
+
+            accs.append(acc)
+
+        accs = np.array(accs)
+        print("Accuracy is: ", accs.mean())
 
     def train(self, X_train, y_train, X_val, y_val, num_epochs):
         #input_var = self.x
@@ -124,18 +153,28 @@ class NeuralNet(object):
 
             #plt.plot(losses)
 
-            val_err = 0.0
-            val_batches = 0.0
-            for batch in iterate_minibatches(X_val, y_val, self.batch_size):
-                inputs, targets = batch
-                err = self.validate(inputs, targets)
-                val_err += err[0]
-                #val_acc += acc
-                val_batches += 1
+            #val_err = 0.0
+            #val_batches = 0.0
+            #for batch in iterate_minibatches(X_val, y_val, self.batch_size):
+                #inputs, targets = batch
+                #err = self.validate(inputs, targets)
+                #val_err += err[0]
+                ##val_acc += acc
+                #val_batches += 1
 
             print("EPOCH: {:,.1f}".format(epoch))
             print("  training loss:\t\t{:.6f}".format(train_loss / train_batches))
-            print("  validation loss:\t\t{:.6f}".format(val_err / val_batches))
+            if (epoch+1) % 10 == 0:
+                print "Train Accuracy: "
+                self.print_accuracy(X_train, y_train)
+                print "Validation Accuracy: "
+                self.print_accuracy(X_val, y_val)
+
+            #print("  validation loss:\t\t{:.6f}".format(val_err / val_batches))
+
+            #if val_err / val_batches < UNTIL_LOSS:
+                #print "Stopping early..."
+                #break
             #print("  validation accuracy:\t\t{:.2f} %".format(
             #    val_acc / val_batches * 100))
 
@@ -200,7 +239,8 @@ class EuclidNet(NeuralNet):
         self.initiliaze()
 
 class ConvBaseline(NeuralNet):
-    def __init__(self, height, width, channels, hidden_size, output_size, batch_size, num_convpools= 2, num_filters= 5):
+    def __init__(self, height, width, channels, hidden_size, output_size, batch_size,
+                 pre_conv= False, num_convpools= 2, pool_param= 4, num_filters= 5, reg= 1e-2):
         NeuralNet.__init__(self)
         self.batch_size = batch_size
 
@@ -212,7 +252,18 @@ class ConvBaseline(NeuralNet):
                                          input_var= self.x)
         self.layers.append(l_in)
 
-        prev_layer = l_in
+        if pre_conv == True:
+            pre_conv = lasagne.layers.Conv2DLayer(
+                l_in, num_filters= num_filters,
+                filter_size=3, stride= 1, pad=1,
+                nonlinearity=lasagne.nonlinearities.tanh,
+                W=lasagne.init.GlorotUniform())
+            self.layers.append(pre_conv)
+
+            prev_layer = pre_conv
+        else:
+            prev_layer = l_in
+
         for cp in range(num_convpools):
             conv = lasagne.layers.Conv2DLayer(
                 prev_layer, num_filters= num_filters,
@@ -221,7 +272,7 @@ class ConvBaseline(NeuralNet):
                 W=lasagne.init.GlorotUniform())
             self.layers.append(conv)
 
-            pool = lasagne.layers.MaxPool2DLayer(conv, pool_size=4, stride=4)
+            pool = lasagne.layers.MaxPool2DLayer(conv, pool_size= pool_param, stride= pool_param)
             self.layers.append(pool)
 
             prev_layer = pool
@@ -232,12 +283,26 @@ class ConvBaseline(NeuralNet):
             W=lasagne.init.GlorotUniform())
         self.layers.append(l_hid3)
 
+        drop1 = lasagne.layers.DropoutLayer(l_hid3)
+        self.layers.append(drop1)
+
+        l_hid4 = lasagne.layers.DenseLayer(
+            drop1, num_units= hidden_size,
+            nonlinearity=lasagne.nonlinearities.tanh, #Rectify may be causing nans in cross entropy loss.
+            W=lasagne.init.GlorotUniform())
+        self.layers.append(l_hid4)
+
+        #drop2 = lasagne.layers.DropoutLayer(l_hid4)
+        #self.layers.append(drop2)
+
         l_out = lasagne.layers.DenseLayer(
-            l_hid3, num_units= output_size,
+            l_hid4, num_units= output_size,
             nonlinearity=lasagne.nonlinearities.linear)
         self.layers.append(l_out)
 
         self.network = l_out
+
+        self.penalty = lasagne.regularization.regularize_network_params(self.layers, penalty= lasagne.regularization.l2) * 1e-2
 
         self.initiliaze(mode= 'classify')
 
