@@ -20,8 +20,7 @@ TODO:
 -Figure out how to scale fixation points when I downsample image.
 Probably as simple as changing the scale on the x/y axes.
 """
-
-RADIUS = 25
+from loadData import RADIUS
 RTHRESH = 120 #Threshold to count as a reward region.
 
 REWARD = 10
@@ -64,57 +63,23 @@ GAMMA = 0.95
 
 
 class Environment():
-    def __init__(self, sample, pos):
+    def __init__(self, sample):
         self.sample = sample
         self.currTrial = sample[0]
-        self.currImg = self.currTrial.image
-        self.currFixmap = self.currTrial.fixmap
+        #self.currImg = self.currTrial.image
+        #self.currFixmap = self.currTrial.fixmap
 
-        self.N, self.M = self.currImg.shape
+        self.N, self.M = self.currTrial.image.shape
 
         #State variables:
         #self.currWin = []
-        self.currPos = pos
 
         #Parameters:
-        self.step_size = 60
-        #plt.imshow(self.currImg, interpolation='nearest')
+        #self.step_size = 60
 
-    def getLegalActions(self):
-        legalActions = ['up', 'down', 'left', 'right']
-        if self.currPos[0] + (RADIUS+self.step_size) > self.currImg.shape[0]:
-            legalActions.remove('up')
-
-        elif self.currPos[0] - (RADIUS+self.step_size) < 0:
-            legalActions.remove('down')
-
-        elif self.currPos[1] + (RADIUS+self.step_size) > self.currImg.shape[1]:
-            legalActions.remove('right')
-
-        elif self.currPos[1] - (RADIUS+self.step_size) < 0:
-            legalActions.remove('left')
-
-        return legalActions
-
-    #def update(self, act):
-        #self.currPos = act
-        #self.currPos = np.floor(act * (self.M, self.N)) #ISSUE: Flip N and M?
-
-        #assert self.currPos.size != 0
-
-        #if act == 'up':
-            #self.currPos[0] += self.step_size
-
-        #elif act == 'down':
-            #self.currPos[0] -= self.step_size
-
-        #elif act == 'left':
-            #self.currPos[1] -= self.step_size
-
-        #elif act == 'right':
-            #self.currPos[1] += self.step_size
-
-        #self.currWin = self.observe(self.currPos[0], self.currPos[1], self.radius)
+    def update(self, k):
+        self.currTrial = self.sample[k]
+        self.N, self.M = self.currTrial.image.shape
 
     #def observe(self, trial= None, x= None, y= None, subject= None, display= False):
     def observe(self, act, trial= None, subject= None, display= None):
@@ -124,18 +89,37 @@ class Environment():
         img = trial.image
         fixmap = trial.fixmap
 
+        N, M = img.shape
+
         #if x == None:
             #x = self.currPos[0]
         #if y == None:
             #y = self.currPos[1]
 
-        x, y = np.floor(act * np.array([self.M, self.N]))
+        x, y = np.floor(act * np.array([M, N]))
 
         yStart = max(0, y-RADIUS)
         xStart = max(0, x-RADIUS)
 
-        yEnd = min(y+RADIUS, img.shape[0])
-        xEnd = min(x+RADIUS, img.shape[1])
+        yEnd = min(y+RADIUS, img.shape[0]-1)
+        xEnd = min(x+RADIUS, img.shape[1]-1)
+
+        if yEnd - yStart != 2*RADIUS or xEnd - xStart != 2*RADIUS:
+            #print ("hit!")
+            img = np.pad(img, 2*RADIUS, mode= 'constant', constant_values= PUNISHMENT)
+            fixmap = np.pad(fixmap, 2*RADIUS, mode= 'constant', constant_values= PUNISHMENT)
+
+            x += 2*RADIUS
+            y += 2*RADIUS
+
+            yStart = max(0, y-RADIUS)
+            xStart = max(0, x-RADIUS)
+
+            yEnd = min(y+RADIUS, img.shape[0]-1)
+            xEnd = min(x+RADIUS, img.shape[1]-1)
+
+        assert yEnd - yStart == 2*RADIUS
+        assert xEnd - xStart == 2*RADIUS
 
         try: #Got a R/G/B image
             #window = img[y-RADIUS:y+RADIUS, x-RADIUS:x+RADIUS, :]
@@ -147,31 +131,10 @@ class Environment():
             #window = img[y-RADIUS:y+RADIUS, x-RADIUS:x+RADIUS]
             cm = 'Greys'
 
-        r_region = fixmap[y-RADIUS:y+RADIUS, x-RADIUS:x+RADIUS]
+        r_region = fixmap[yStart:yEnd, xStart:xEnd]
         reward = r_region.mean()
-        #if r_region.mean() > RTHRESH:
-            #reward = REWARD
-        #else:
-            #reward = PUNISHMENT
 
-        #plt.imshow(window, cmap= cm, interpolation='nearest')
-        #plt.show()
-
-        #ISSUE: Zero-Pad edge cases...
-        window_Orig = window
-
-        #if window.shape == (2*RADIUS, 2*RADIUS):
-            #if x+RADIUS > img.shape[1]:
-                #window= np.column_stack((window, np.zeros((2*RADIUS, 2*RADIUS - window.shape[1]))))
-
-            #if x-RADIUS < 0:
-                #window= np.column_stack((np.zeros((2*RADIUS, 2*RADIUS - window.shape[1])), window))
-
-            #if y+RADIUS > img.shape[0]:
-            #if y-RADIUS < 0:
-
-        if window.shape != (2*RADIUS, 2*RADIUS): #ISSUE: Not best way to do this...
-            window = np.resize(window, (2*RADIUS, 2*RADIUS))
+        assert not np.isnan(reward)
 
         if display is not None:
             if display == 'img':
@@ -181,6 +144,7 @@ class Environment():
 
             plt.imshow(disp, cmap= cm, interpolation='nearest')
             plt.scatter(x, y)
+            plt.scatter([x-RADIUS, x+RADIUS, x-RADIUS, x+RADIUS], [y-RADIUS, y-RADIUS, y+RADIUS, y+RADIUS], color= 'g')
             plt.show()
 
         return window, reward
@@ -197,8 +161,8 @@ class Environment():
                         continue
                     trans= {}
 
-                    act_x = coord[0] / float(self.M)
-                    act_y = coord[1] / float(self.N)
+                    act_x = coord[0]
+                    act_y = coord[1]
 
                     s, _ = self.observe(act= [act_x, act_y], trial= trial)
                     if s.size == 0:
@@ -207,8 +171,8 @@ class Environment():
                     assert s.shape == (2*RADIUS, 2*RADIUS)
                     trans['state'] = s
 
-                    act_x_next = traj[i+1, 0] / float(self.M)
-                    act_y_next = traj[i+1, 1] / float(self.N)
+                    act_x_next = traj[i+1, 0]
+                    act_y_next = traj[i+1, 1]
 
                     #print('act_x_next: ', act_x_next)
                     #print('act_y_next: ', act_y_next)
@@ -261,6 +225,7 @@ class FeatureExtractor(object):
 class pcaExtract(FeatureExtractor):
     def train(self, sample, numWins):
         #raise NotImplemented
+        print "Training PCA extractor..."
         num_components = (2*RADIUS)**2
         num_samples = len(sample)*numWins
         assert num_samples > num_components
@@ -343,8 +308,8 @@ class Agent():
         return X, Y
 
 
-
     def cacla(self, human_data, c_batch_size, num_epochs= 10):
+        print "Performing CACLA..."
         eps = 100
 
         actor = SigNet(self.D, hidden_size= self.D*2, output_size= 2, batch_size= c_batch_size)
@@ -360,53 +325,68 @@ class Agent():
         #critic.train(A_train, b_train[np.newaxis].T, A_val, b_val[np.newaxis].T, num_epochs= 5)
 
         #CACLA
+        print "Starting iterations..."
         rewards = []
-        for k in range(50):
-            deltas = np.zeros((c_batch_size)) #Change to empty for speed-up.
-            critic_y = np.zeros((c_batch_size))
-            X = np.zeros((c_batch_size, self.D))
 
-            #true_acts = np.zeros((c_batch_size, 2))
-            noise_acts = np.zeros((c_batch_size, 2))
+        mean_rewards = np.zeros(40)
+        for it in range(40):
+            print("ITERATION: ", it)
 
-            #Should vectorize this...
-            for i in range(c_batch_size):
-                window, _ = self.env.observe(act= np.random.uniform(0, 1, 2))
-                state = self.extractFeatures(window)
-                X[i] = state
+            datapoints = np.random.choice(range(len(self.env.sample)), 3)
 
-                #Noise the action in such a way that it remains in the percentage.
-                a = actor.predict(state)
-                #print("Actor predicted: ", a)
-                a = np.random.normal(a * (self.env.M, self.env.N), eps, 2) / (self.env.M , self.env.N) #ISSUE: Flip?
-                a = np.maximum(np.minimum(a, 1),0).reshape(1, 2)
-                #print("Exploratory action: ", a)
+            for d in datapoints:
+                self.env.update(d)
+                print("Image: ", d)
 
-                noise_acts[i] = a
+                start_coord = np.random.uniform(0, 1, 2)
+                for t in range(HORIZON):
+                    deltas = np.zeros((c_batch_size)) #Change to empty for speed-up.
+                    critic_y = np.zeros((c_batch_size))
+                    X = np.zeros((c_batch_size, self.D))
+                    noise_acts = np.zeros((c_batch_size, 2))
 
-                #self.env.update(a[0])
-                window, r = self.env.observe(act= a[0])
-                succ = self.extractFeatures(window)
+                    #Should vectorize this...
+                    if t == 0:
+                        window, _ = self.env.observe(act= start_coord) #Just picking points randomly...
 
-                deltas[i] = r + GAMMA * critic.predict(succ) - critic.predict(state)
-                #critic_y[i] = r + GAMMA * critic.predict(succ)
-                critic_y[i] = r
+                    ##Create batch by taking different exploratory actions.
+                    for i in range(c_batch_size):
+                        state = self.extractFeatures(window)
+                        X[i] = state
 
-                #print('r: ', r)
+                        #Noise the action in such a way that it remains in the percentage.
+                        a = actor.predict(state)
+                        #print("Actor predicted: ", a)
+                        a = np.random.normal(a * (self.env.M, self.env.N), eps, 2) / (self.env.M , self.env.N) #ISSUE: Flip?
+                        a = np.maximum(np.minimum(a, 1),0).reshape(1, 2)
+                        #print("Exploratory action: ", a)
 
-            #critic.train(X_train, Y_train, deltas= deltas, batch_size= c_batch_size)
-            X = sk.preprocessing.scale(X)
-            for epoch in range(num_epochs):
-                critic.weight_update(X, critic_y.reshape(c_batch_size,1))
-                actor.weight_update(X[deltas > 0], noise_acts[deltas > 0])
+                        noise_acts[i] = a
+                        window, r = self.env.observe(act= a[0])
+                        succ = self.extractFeatures(window)
 
-            window, r = self.env.observe(act= actor.predict(state)[0], display= 'fixmap')
-            rewards.append(r)
-            print("Iteration: ", k)
-            print("GOT REWARD: ", r)
+                        deltas[i] = r + GAMMA * critic.predict(succ) - critic.predict(state)
+                        critic_y[i] = r + GAMMA * critic.predict(succ)
 
-        plt.plot(rewards)
-        halt= True
+                    X = sk.preprocessing.scale(X)
+                    for epoch in range(num_epochs):
+                        critic.weight_update(X, critic_y.reshape(c_batch_size,1))
+                        actor.weight_update(X[deltas > 0], noise_acts[deltas > 0])
+
+                    window, r = self.env.observe(act= actor.predict(state)[0])
+                    rewards.append(r)
+                    print("Time-Step: ", t)
+                    print("GOT REWARD: ", r)
+
+            #plt.plot(rewards)
+            mean_rewards[it] = np.array(rewards).mean()
+            halt= True
+
+        plt.plot(mean_rewards)
+        plt.show()
+
+        halt = True
+
 
 
     def simulate(self):
@@ -418,38 +398,25 @@ class Agent():
             self.env.update(a)
 
 
-#mlp = TwoLayerNet(loss_layer=euclid_log_loss)
+if False:
+    S = sampleCAT(200, size= 0.5, asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
+    S1 = S[:10]
+    S2 = S[10:]
+    env = Environment(S1)
+    D = env.getEpisodes()
+    phi = pcaExtract(100)
+    phi.train(S2, 50)
+    age = Agent(env, phi)
+    age.cacla(D, c_batch_size = 100)
+else:
+    S = sampleCAT(10, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
+    env = Environment(S)
+    D = env.getEpisodes()
+    phi = IdentityExtract((2*RADIUS)**2)
+    age = Agent(env, phi)
+    age.cacla(D, c_batch_size = 100)
 
-S = sampleCAT(100, size= 1.0, asgray= True, categories= ['Action', 'Indoor', 'Object', 'Affective'])
-#for trial in S:
-    #trial.removeInvalid()
 
-S1 = S[:10]
-S2 = S[10:]
-#S1 = sampleCAT(10, size= 0.3, asgray= True, categories= ['Action', 'Indoor', 'Object', 'Affective'])
-try:
-    x, y, z = S1[0].image.shape
-except:
-    x, y = S1[0].image.shape
-
-x = math.floor(y/2.0)
-y = math.floor(x/2.0)
-env = Environment(S1, [x, y])
-D = env.getEpisodes()
-
-#pca = getPCA(S2, 10, 100)
-#phi = lambda x: pca.transform(x)
-#phi = lambda x: x
-
-phi = IdentityExtract((2*RADIUS)**2)
-#phi = pcaExtract(100)
-#phi.train(S2, 30)
-
-age = Agent(env, phi)
-age.cacla(D, c_batch_size = 100)
-#age.train(D)
-#age.simulate()
-
-#env.observe(x, y, 30)
+#S = sampleCAT(150, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
 
 halt= True
