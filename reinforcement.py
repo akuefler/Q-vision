@@ -316,54 +316,54 @@ class Agent():
 
         return X, Y
 
-    def attendToImage(self, imageIdx, c_batch_size, num_epochs= 10,  mode= 'train'):
-        self.env.update(imageIdx, mode= mode)
-        rewards = []
-        eps = 100
+    #def attendToImage(self, imageIdx, c_batch_size, num_epochs= 10,  mode= 'train'):
+        #self.env.update(imageIdx, mode= mode)
+        #rewards = []
+        #eps = 100
 
-        start_coord = np.random.uniform(0, 1, 2)
-        for t in range(HORIZON):
-            if t == 0:
-                window, _ = self.env.observe(act= start_coord) #Just picking points randomly...
+        #start_coord = np.random.uniform(0, 1, 2)
+        #for t in range(HORIZON):
+            #if t == 0:
+                #window, _ = self.env.observe(act= start_coord) #Just picking points randomly...
 
-            if mode == 'train':
-                deltas = np.zeros((c_batch_size)) #Change to empty for speed-up.
-                critic_y = np.zeros((c_batch_size))
-                X = np.zeros((c_batch_size, self.D))
-                noise_acts = np.zeros((c_batch_size, 2))
+            #if mode == 'train':
+                #deltas = np.zeros((c_batch_size)) #Change to empty for speed-up.
+                #critic_y = np.zeros((c_batch_size))
+                #X = np.zeros((c_batch_size, self.D))
+                #noise_acts = np.zeros((c_batch_size, 2))
 
-                #Should vectorize this...
-                #if t == 0:
-                    #window, _ = self.env.observe(act= start_coord) #Just picking points randomly...
+                ##Should vectorize this...
+                ##if t == 0:
+                    ##window, _ = self.env.observe(act= start_coord) #Just picking points randomly...
 
-                ##Create batch by taking different exploratory actions.
-                for i in range(c_batch_size):
-                    state = self.extractFeatures(window)
-                    X[i] = state
+                ###Create batch by taking different exploratory actions.
+                #for i in range(c_batch_size):
+                    #state = self.extractFeatures(window)
+                    #X[i] = state
 
-                    #Noise the action in such a way that it remains in the percentage.
-                    a = self.actor.predict(state)
-                    a = np.random.normal(a * (self.env.M, self.env.N), eps, 2) / (self.env.M , self.env.N)
-                    a = np.maximum(np.minimum(a, 1),0).reshape(1, 2)
+                    ##Noise the action in such a way that it remains in the percentage.
+                    #a = self.actor.predict(state)
+                    #a = np.random.normal(a * (self.env.M, self.env.N), eps, 2) / (self.env.M , self.env.N)
+                    #a = np.maximum(np.minimum(a, 1),0).reshape(1, 2)
 
-                    noise_acts[i] = a
-                    window, r = self.env.observe(act= a[0])
-                    succ = self.extractFeatures(window)
+                    #noise_acts[i] = a
+                    #window, r = self.env.observe(act= a[0])
+                    #succ = self.extractFeatures(window)
 
-                    deltas[i] = r + GAMMA * self.critic.predict(succ) - self.critic.predict(state)
-                    critic_y[i] = r + GAMMA * self.critic.predict(succ)
+                    #deltas[i] = r + GAMMA * self.critic.predict(succ) - self.critic.predict(state)
+                    #critic_y[i] = r + GAMMA * self.critic.predict(succ)
 
-                X = sk.preprocessing.scale(X)
-                for epoch in range(num_epochs):
-                    self.critic.weight_update(X, critic_y.reshape(c_batch_size,1))
-                    self.actor.weight_update(X[deltas > 0], noise_acts[deltas > 0])
-            elif mode == 'val':
-                state = self.extractFeatures(window)
+                #X = sk.preprocessing.scale(X)
+                #for epoch in range(num_epochs):
+                    #self.critic.weight_update(X, critic_y.reshape(c_batch_size,1))
+                    #self.actor.weight_update(X[deltas > 0], noise_acts[deltas > 0])
+            #elif mode == 'val':
+                #state = self.extractFeatures(window)
 
-            window, r = self.env.observe(act= self.actor.predict(state)[0])
-            rewards.append(r)
+            #window, r = self.env.observe(act= self.actor.predict(state)[0])
+            #rewards.append(r)
 
-        return rewards
+        #return rewards
 
         #start_coord = np.random.uniform(0, 1, 2)
         #for t in range(HORIZON):
@@ -419,13 +419,161 @@ class Agent():
 
             #return rewards
 
-    def cacla(self, human_data, c_batch_size, num_epochs= 10):
-        print "Performing CACLA..."
-        eps = 100
+    def batch_cacla(self, ix, c_batch_size, num_epochs, mode = 'train'):
+        self.env.update(ix, mode= mode)
+        #eps = 100
+        eps = 15
 
-        actor = SigNet(self.D, hidden_size= self.D*2, output_size= 2, batch_size= c_batch_size)
+        start_coord = np.random.uniform(0, 1, 2)
+        arr = np.array([float(i)/MEMORY for i in range(MEMORY + 1)])
+
+        #rewards = []
+        #for t in range(HORIZON):
+            #if t == 0:
+                #window, _ = self.env.observe(act= start_coord)
+            #state = self.extractFeatures(window)
+            #window, r = self.env.observe(act= self.actor.predict(state)[0])
+            #rewards.append(r)
+
+        #halt= True
+
+        if mode == 'train':
+
+            deltas = np.zeros((c_batch_size * HORIZON)) #Change to empty for speed-up.
+            critic_y = np.zeros((c_batch_size * HORIZON))
+            X = np.zeros((c_batch_size * HORIZON, self.D))
+            M = np.zeros((c_batch_size * HORIZON, MEMORY**2))
+            noise_acts = np.zeros((c_batch_size * HORIZON, 2))
+
+            for b in range(c_batch_size):
+
+                m = np.zeros((MEMORY, MEMORY))
+                for t in range(HORIZON):
+                    i = b*HORIZON + t
+
+                    if t == 0:
+                        window, _ = self.env.observe(act= start_coord)
+                    state = self.extractFeatures(window)
+                    mem = m.reshape((1, MEMORY**2)).copy()
+                    #state = np.concatenate((state, m.reshape((1, MEMORY**2))), axis= 1)
+
+                    X[i] = state
+                    M[i] = mem
+
+                    #Noise the action in such a way that it remains in the percentage.
+                    a = self.actor.predict(state, mem)
+                    a = np.random.normal(a * (self.env.M, self.env.N), eps, 2) / (self.env.M , self.env.N) #ISSUE: Flip?
+                    a = np.maximum(np.minimum(a, 1),0).reshape(1, 2)
+
+                    noise_acts[i] = a
+                    window, r = self.env.observe(act= a[0])
+                    succ = self.extractFeatures(window)
+
+                    #Update m here:
+                    H, _, _ = np.histogram2d([a[0, 0]], [a[0, 1]], bins=(arr, arr))
+                    m += H.astype('float32')
+                    mem_succ = m.reshape((1, MEMORY**2))
+
+                    #succ = np.concatenate((succ, m.reshape((1, MEMORY**2))), axis= 1)
+
+                    deltas[i] = r + GAMMA * self.critic.predict(succ, mem_succ) - self.critic.predict(state, mem)
+                    critic_y[i] = r + GAMMA * self.critic.predict(succ, mem_succ)
+
+            m = np.zeros((MEMORY, MEMORY))
+            for epoch in range(num_epochs):
+                self.critic.weight_update(X, M, critic_y.reshape(HORIZON*c_batch_size,1))
+                self.actor.weight_update(X[deltas > 0], M[deltas > 0], noise_acts[deltas > 0])
+
+            #print "Num positive states: ", X[deltas > 0].shape[0]
+
+
+        rewards = []
+        m = np.zeros((MEMORY, MEMORY))
+        for t in range(HORIZON):
+            if t == 0:
+                window, _ = self.env.observe(act= start_coord)
+            state = self.extractFeatures(window)
+
+            #state = np.concatenate((state, m.reshape((1, MEMORY**2))), axis= 1)
+            mem = m.reshape((1, MEMORY**2))
+
+            a = self.actor.predict(state, mem)[0]
+            H, _, _ = np.histogram2d([a[0]], [a[1]], bins=(arr, arr))
+            m += H.astype('float32')
+
+            window, r = self.env.observe(act= a)
+            rewards.append(r)
+
+        return rewards
+
+
+
+    def cacla(self, ix, mode, c_batch_size, num_epochs):
+        self.env.update(ix, mode= mode)
+        eps = 100
+        #print("Image: ", d)
+
+        start_coord = np.random.uniform(0, 1, 2)
+
+        rewards = []
+
+        for t in range(HORIZON):
+            if t == 0:
+                window, _ = self.env.observe(act= start_coord) #Just picking points randomly...
+
+                #tru_state = self.extractFeatures(window)
+                #win = window
+            if mode == 'train':
+                tru_state = self.extractFeatures(window)
+                win = window
+
+                deltas = np.zeros((c_batch_size)) #Change to empty for speed-up.
+                critic_y = np.zeros((c_batch_size))
+                X = np.zeros((c_batch_size, self.D))
+                noise_acts = np.zeros((c_batch_size, 2))
+
+                ##Create batch by taking different exploratory actions.
+                for i in range(c_batch_size):
+                    state = self.extractFeatures(win)
+                    X[i] = state
+
+                    #Noise the action in such a way that it remains in the percentage.
+                    a = self.actor.predict(state)
+                    #print("Actor predicted: ", a)
+                    a = np.random.normal(a * (self.env.M, self.env.N), eps, 2) / (self.env.M , self.env.N) #ISSUE: Flip?
+                    a = np.maximum(np.minimum(a, 1),0).reshape(1, 2)
+                    #print("Exploratory action: ", a)
+
+                    noise_acts[i] = a
+                    win, r = self.env.observe(act= a[0])
+                    succ = self.extractFeatures(win)
+
+                    deltas[i] = r + GAMMA * self.critic.predict(succ) - self.critic.predict(state)
+                    critic_y[i] = r + GAMMA * self.critic.predict(succ)
+
+                #X = sk.preprocessing.scale(X) ##ISSUE: Shouldn't do this, because can't replicate it at test time.
+                for epoch in range(num_epochs):
+                    self.critic.weight_update(X, critic_y.reshape(c_batch_size,1))
+                    self.actor.weight_update(X[deltas > 0], noise_acts[deltas > 0])
+
+                window, r = self.env.observe(act= self.actor.predict(tru_state)[0])
+                rewards.append(r)
+
+            elif mode == 'val':
+                state = self.extractFeatures(window)
+                a = self.actor.predict(state)
+                window, r = self.env.observe(act= a[0])
+                rewards.append(r)
+
+        return rewards
+
+    def train(self, human_data, c_batch_size, num_epochs= 10):
+        print "Performing CACLA..."
+
+        #self.actor = SigNet(self.D, MEMORY**2, hidden_size= self.D*2, output_size= 2, batch_size= c_batch_size*HORIZON)
+        self.actor = SplitNet(self.D, MEMORY**2, hidden_size= self.D*2, output_size= 2, batch_size= c_batch_size*HORIZON)
         #critic = EuclidNet(self.D, hidden_size= self.D*2, output_size= 1, batch_size= c_batch_size)
-        critic = EuclidNet(self.D, hidden_size= 300, output_size= 1, batch_size= c_batch_size)
+        self.critic = EuclidNet(self.D, MEMORY**2, hidden_size= 300, output_size= 1, batch_size= c_batch_size*HORIZON)
 
         #Pre-train critic on human data.
         #A, b = self.getCriticX(human_data)
@@ -439,80 +587,30 @@ class Agent():
         print "Starting iterations..."
         #rewards = []
 
-        num_iters = 100
+        num_iters = 200
 
         mean_train_rewards = np.zeros(num_iters)
         mean_val_rewards = np.zeros(num_iters)
 
         for it in range(num_iters):
-            train_rewards = []
-            val_rewards = []
             print("ITERATION: ", it)
 
             trainpoints = np.random.choice(range(len(self.env.train_sample)), 3)
 
+            train_rewards = []
             for d in trainpoints:
-                self.env.update(d, mode= 'train')
-                print("Image: ", d)
+                rewards = self.batch_cacla(d, c_batch_size, num_epochs, mode= 'train')
+                train_rewards.append(rewards)
 
-                start_coord = np.random.uniform(0, 1, 2)
-                for t in range(HORIZON):
-
-                    deltas = np.zeros((c_batch_size)) #Change to empty for speed-up.
-                    critic_y = np.zeros((c_batch_size))
-                    X = np.zeros((c_batch_size, self.D))
-                    noise_acts = np.zeros((c_batch_size, 2))
-
-                    #Should vectorize this...
-                    if t == 0:
-                        window, _ = self.env.observe(act= start_coord) #Just picking points randomly...
-
-                    ##Create batch by taking different exploratory actions.
-                    for i in range(c_batch_size):
-                        state = self.extractFeatures(window)
-                        X[i] = state
-
-                        #Noise the action in such a way that it remains in the percentage.
-                        a = actor.predict(state)
-                        #print("Actor predicted: ", a)
-                        a = np.random.normal(a * (self.env.M, self.env.N), eps, 2) / (self.env.M , self.env.N) #ISSUE: Flip?
-                        a = np.maximum(np.minimum(a, 1),0).reshape(1, 2)
-                        #print("Exploratory action: ", a)
-
-                        noise_acts[i] = a
-                        window, r = self.env.observe(act= a[0])
-                        succ = self.extractFeatures(window)
-
-                        deltas[i] = r + GAMMA * critic.predict(succ) - critic.predict(state)
-                        critic_y[i] = r + GAMMA * critic.predict(succ)
-
-                    X = sk.preprocessing.scale(X)
-                    for epoch in range(num_epochs):
-                        critic.weight_update(X, critic_y.reshape(c_batch_size,1))
-                        actor.weight_update(X[deltas > 0], noise_acts[deltas > 0])
-
-                    window, r = self.env.observe(act= actor.predict(state)[0])
-                    train_rewards.append(r)
-                    #print("Time-Step: ", t)
-                    #print("GOT REWARD: ", r)
-
-            #plt.plot(rewards)
             valpoints = np.random.choice(range(len(self.env.val_sample)), 3)
 
+            val_rewards = []
             for d in valpoints:
-                self.env.update(d, mode= 'val')
-                start_coord = np.random.uniform(0, 1, 2)
-                for t in range(HORIZON):
-                    if t == 0:
-                        window, _ = self.env.observe(act= start_coord)
-                    state = self.extractFeatures(window)
-                    a = actor.predict(state)
-                    window, r = self.env.observe(act= a[0])
-                    val_rewards.append(r)
+                rewards = self.batch_cacla(d, c_batch_size, num_epochs, mode= 'val')
+                val_rewards.append(rewards)
 
             mean_train_rewards[it] = np.array(train_rewards).mean()
             mean_val_rewards[it] = np.array(val_rewards).mean()
-            halt= True
 
         plt.plot(mean_train_rewards, c= 'b')
         plt.plot(mean_val_rewards, c= 'r')
@@ -531,23 +629,27 @@ class Agent():
             self.env.update(a)
 
 
-if False:
-    S = sampleCAT(200, size= 0.5, asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
-    S1 = S[:10]
-    S2 = S[10:]
-    env = Environment(S1)
+print "RADIUS: ", RADIUS
+
+if True:
+    print "Using PCA extractor..."
+    S = sampleCAT(300, size= 0.5, asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
+    S1 = S[:30]
+    S2 = S[30:]
+    env = Environment(S1, use_val= True)
     #D = env.getEpisodes()
-    phi = pcaExtract(100)
+    phi = pcaExtract(200)
     phi.train(S2, 50)
     age = Agent(env, phi)
-    age.cacla(None, c_batch_size = 100)
+    age.train(None, c_batch_size = 100, num_epochs= 20)
 else:
+    print "Using Identity extractor..."
     S = sampleCAT(15, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
     env = Environment(S, use_val = True)
     #D = env.getEpisodes()
     phi = IdentityExtract((2*RADIUS)**2)
     age = Agent(env, phi)
-    age.cacla(None, c_batch_size = 100)
+    age.train(None, c_batch_size = 10)
 
 
 #S = sampleCAT(150, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
