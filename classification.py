@@ -93,9 +93,18 @@ if False:
 
     #H = 2*RADIUS
     #rcnn = ConvLSTM(H, H, 1, HORIZON, 500, len(categories), batch_size= 10)
-
     #rcnn.predict(X_SEQS_train[0:10])
 
+elif True:
+    categories= ['Action', 'Indoor', 'Object', 'Affective']
+    size = (256, 256)
+    N = 100
+    X_train, X_val, X_test, Y_train, Y_val, Y_test,\
+    X_SEQ_train, X_SEQ_val, X_SEQ_test, Y_SEQ_train, Y_SEQ_val, Y_SEQ_test = sampleCATdata(N, size= size, asgray= True, categories= categories)
+
+    H = 2*RADIUS
+    rcnn = ConvLSTM(H, H, 1, HORIZON, 500, len(categories), batch_size= 10, reg= 0.0)
+    #rcnn.predict(X_SEQS_train[0:10])
 
 else:
     fo1 = open('./data/cifar-10-batches-py/data_batch_1', 'rb')
@@ -106,14 +115,14 @@ else:
     dic2 = cPickle.load(fo2)
     fo2.close()
 
-    #fo3 = open('./data/cifar-10-batches-py/data_batch_3', 'rb')
-    #dic3 = cPickle.load(fo3)
-    #fo3.close()
+    fo3 = open('./data/cifar-10-batches-py/data_batch_3', 'rb')
+    dic3 = cPickle.load(fo3)
+    fo3.close()
 
     asgray= False
 
-    X = np.row_stack((dic1['data'], dic2['data']))
-    Y = np.concatenate((dic1['labels'], dic2['labels']))
+    X = np.row_stack((dic1['data'], dic2['data'], dic3['data']))
+    Y = np.concatenate((dic1['labels'], dic2['labels'], dic3['labels']))
 
     #X = dic1['data']
     #Y = dic1['labels']
@@ -147,11 +156,15 @@ else:
     #Y_train, Y_val, Y_test = np.array_split(X, [0.5*N, 0.75*N])
     #cnn = ConvBaseline(32, 32, C, 500, 10, batch_size= 200, num_filters= 20)
     #cnn = ConvBaseline(32, 32, C, 600, 10, pool_param= 2, num_convpools= 3, batch_size= 200, num_filters= 30)
-    cnn = ConvBaseline(32, 32, C, 600, 10, pool_param= 2, pre_conv= True, num_convpools= 2, batch_size= 200, num_filters= 30, reg= 1e-4)
+    #cnn = ConvBaseline(32, 32, C, 600, 10, pool_param= 2, pre_conv= True, num_convpools= 2, batch_size= 200, num_filters= 30, reg= 1e-1)
+    cnn = ConvBaseline(32, 32, C, 750, 10, pool_param= 2, pre_conv= True, num_convpools= 2, num_hiddense= 3, batch_size= 200, num_filters= 30, reg= 1e-1)
 
-if True:
+if False:
     ##Highest CIFAR accuracy so far: ~0.21 w 20 filters, 500 hidden units, 60 epochs
-    cnn.train(X_train, Y_train, X_val, Y_val, num_epochs= 200) #Lower learning rate seems to make a considerable diff.
+    Y_train = Y_train.astype('int32')
+    Y_val = Y_val.astype('int32')
+
+    cnn.train(X_train, Y_train, X_val, Y_val, num_epochs= 300) #Lower learning rate seems to make a considerable diff.
 
     #X_train_out = cnn.predict(X_train)
     #X_train_pred = X_train_out.argmax(axis = 1)
@@ -159,23 +172,29 @@ if True:
     #print("Accuracy on training set", acc_train)
 
     print("TRAIN SET")
-    cnn.print_accuracy(cnn, X_train, Y_train)
+    cnn.print_accuracy(X_train, Y_train)
 
     print("VAL SET")
-    cnn.print_accuracy(cnn, X_val, Y_val)
+    cnn.print_accuracy(X_val, Y_val)
 
     #X_val_out = cnn.predict(X_val)
     #X_val_pred = X_val_out.argmax(axis = 1)
     #acc_val = mets.accuracy_score(Y_val, X_val_pred)
     #print("Accuracy on validation set", acc_val)
 
-if False:
+if True:
     rcnn.train(X_SEQ_train, Y_SEQ_train, X_SEQ_val, Y_SEQ_val, num_epochs= 100)
 
-    error = mets.accuracy_score(Y_SEQ_train, rcnn.predict(X_SEQ_train).argmax(axis = 1))
-    print("Accuracy on training set", error)
+    print("TRAIN SET")
+    rcnn.print_accuracy(X_train, Y_train)
 
-    error = mets.accuracy_score(Y_SEQ_test, rcnn.predict(X_SEQ_test).argmax(axis = 1))
-    print("Accuracy on test set", error)
+    print("VAL SET")
+    rcnn.print_accuracy(X_val, Y_val)
+
+    #error = mets.accuracy_score(Y_SEQ_train, rcnn.predict(X_SEQ_train).argmax(axis = 1))
+    #print("Accuracy on training set", error)
+
+    #error = mets.accuracy_score(Y_SEQ_test, rcnn.predict(X_SEQ_test).argmax(axis = 1))
+    #print("Accuracy on test set", error)
 
 halt= True
