@@ -225,7 +225,7 @@ class FeatureExtractor(object):
     def __init__(self, D):
         self.D = D
 
-    def tranform(self):
+    def transform(self):
         """
         Overwrite method.
         """
@@ -237,9 +237,10 @@ class pcaExtract(FeatureExtractor):
         print "Training PCA extractor..."
         num_components = (2*RADIUS)**2
         num_samples = len(sample)*numWins
-        assert num_samples > num_components
+        #assert num_samples > num_components
 
         X = np.zeros((num_samples, num_components))
+        D = self.D[0]
 
         #Create observation matrix:
         for j, trial in enumerate(sample):
@@ -263,23 +264,31 @@ class pcaExtract(FeatureExtractor):
                 X[i + numWins*j, :] = window.flatten()
 
         #Perform PCA
-        pca = deco.RandomizedPCA(n_components= self.D)
+        pca = deco.RandomizedPCA(n_components= D)
         pca.fit(X)
 
         self.pca = pca
 
     def transform(self, X):
-        return self.pca.transform(X)
+        return self.pca.transform(X.flatten().reshape(1,-1))
+
+class FlattenExtract(FeatureExtractor):
+    def transform(self, X):
+        X = X.flatten().reshape(1,-1)
+        return X
 
 class IdentityExtract(FeatureExtractor):
     def transform(self, X):
-        return X
+        if X.ndim == 2:
+            X = X[np.newaxis]
+        return X[np.newaxis]
 
 
 class Agent():
-    def __init__(self, environment, phi):
+    def __init__(self, environment, phi= FlattenExtract):
         self.env = environment
         self.phi = phi
+
         self.D = phi.D
 
     def act(self, state, epsilon = 0.5):
@@ -287,34 +296,34 @@ class Agent():
         act = np.random.choice(legalActs)
         return act
 
-    def extractFeatures(self, window):
-        win = window.flatten().reshape(1,-1)
-        state = self.phi.transform(win)
-        return state
+    #def extractFeatures(self, window):
+        ##win = window.flatten().reshape(1,-1)
+        #state = self.phi.transform(window)
+        #return state
 
-    def getCriticX(self, human_data, shuffle= True):
-        X = None
-        Y = None
-        for ep in human_data:
-            for tran in ep.rollout:
-                x = self.extractFeatures(tran['state'])
-                y = np.array([tran['reward']])
-                if X is None:
-                    X = x
-                else:
-                    X = np.row_stack((X, x))
+    #def getCriticX(self, human_data, shuffle= True):
+        #X = None
+        #Y = None
+        #for ep in human_data:
+            #for tran in ep.rollout:
+                #x = self.extractFeatures(tran['state'])
+                #y = np.array([tran['reward']])
+                #if X is None:
+                    #X = x
+                #else:
+                    #X = np.row_stack((X, x))
 
-                if Y is None:
-                    Y = y
-                else:
-                    Y = np.concatenate((Y,y))
+                #if Y is None:
+                    #Y = y
+                #else:
+                    #Y = np.concatenate((Y,y))
 
-        if shuffle:
-            p = np.random.permutation(range(len(Y)))
-            X = X[p]
-            Y = Y[p]
+        #if shuffle:
+            #p = np.random.permutation(range(len(Y)))
+            #X = X[p]
+            #Y = Y[p]
 
-        return X, Y
+        #return X, Y
 
     #def attendToImage(self, imageIdx, c_batch_size, num_epochs= 10,  mode= 'train'):
         #self.env.update(imageIdx, mode= mode)
@@ -441,7 +450,7 @@ class Agent():
 
             deltas = np.zeros((c_batch_size * HORIZON)) #Change to empty for speed-up.
             critic_y = np.zeros((c_batch_size * HORIZON))
-            X = np.zeros((c_batch_size * HORIZON, self.D))
+            X = np.zeros((c_batch_size * HORIZON,) + self.D)
             M = np.zeros((c_batch_size * HORIZON, MEMORY**2))
             noise_acts = np.zeros((c_batch_size * HORIZON, 2))
 
@@ -453,7 +462,7 @@ class Agent():
 
                     if t == 0:
                         window, _ = self.env.observe(act= start_coord)
-                    state = self.extractFeatures(window)
+                    state = self.phi.transform(window)
                     mem = m.reshape((1, MEMORY**2)).copy()
                     #state = np.concatenate((state, m.reshape((1, MEMORY**2))), axis= 1)
 
@@ -467,7 +476,7 @@ class Agent():
 
                     noise_acts[i] = a
                     window, r = self.env.observe(act= a[0])
-                    succ = self.extractFeatures(window)
+                    succ = self.phi.transform(window)
 
                     #Update m here:
                     H, _, _ = np.histogram2d([a[0, 0]], [a[0, 1]], bins=(arr, arr))
@@ -486,13 +495,42 @@ class Agent():
 
             #print "Num positive states: ", X[deltas > 0].shape[0]
 
+        rewards = self.simulate(start_coord=start_coord)
+        return rewards
+        #rewards = []
+        #m = np.zeros((MEMORY, MEMORY))
+        #for t in range(HORIZON):
+            #if t == 0:
+                #window, _ = self.env.observe(act= start_coord)
+            #state = self.phi.transform(window)
 
+            ##state = np.concatenate((state, m.reshape((1, MEMORY**2))), axis= 1)
+            #mem = m.reshape((1, MEMORY**2))
+
+            #a = self.actor.predict(state, mem)[0]
+            #H, _, _ = np.histogram2d([a[0]], [a[1]], bins=(arr, arr))
+            #m += H.astype('float32')
+
+            #window, r = self.env.observe(act= a)
+            #rewards.append(r)
+
+        #return rewards
+
+
+    def simulate(self, mode= 'train', start_coord= None, imgIdx= None, display= None):
         rewards = []
+        arr = np.array([float(i)/MEMORY for i in range(MEMORY + 1)])
+
+        if imgIdx is not None:
+            self.env.update(imgIdx, mode= 'train')
+        elif start_coord is None:
+            start_coord = np.random.uniform(0, 1, 2)
+
         m = np.zeros((MEMORY, MEMORY))
         for t in range(HORIZON):
             if t == 0:
                 window, _ = self.env.observe(act= start_coord)
-            state = self.extractFeatures(window)
+            state = self.phi.transform(window)
 
             #state = np.concatenate((state, m.reshape((1, MEMORY**2))), axis= 1)
             mem = m.reshape((1, MEMORY**2))
@@ -501,79 +539,85 @@ class Agent():
             H, _, _ = np.histogram2d([a[0]], [a[1]], bins=(arr, arr))
             m += H.astype('float32')
 
-            window, r = self.env.observe(act= a)
+            window, r = self.env.observe(act= a, display= display)
             rewards.append(r)
 
         return rewards
 
 
+    #def cacla(self, ix, mode, c_batch_size, num_epochs):
+        #self.env.update(ix, mode= mode)
+        #eps = 100
+        ##print("Image: ", d)
 
-    def cacla(self, ix, mode, c_batch_size, num_epochs):
-        self.env.update(ix, mode= mode)
-        eps = 100
-        #print("Image: ", d)
+        #start_coord = np.random.uniform(0, 1, 2)
 
-        start_coord = np.random.uniform(0, 1, 2)
+        #rewards = []
 
-        rewards = []
+        #for t in range(HORIZON):
+            #if t == 0:
+                #window, _ = self.env.observe(act= start_coord) #Just picking points randomly...
 
-        for t in range(HORIZON):
-            if t == 0:
-                window, _ = self.env.observe(act= start_coord) #Just picking points randomly...
-
+                ##tru_state = self.extractFeatures(window)
+                ##win = window
+            #if mode == 'train':
                 #tru_state = self.extractFeatures(window)
                 #win = window
-            if mode == 'train':
-                tru_state = self.extractFeatures(window)
-                win = window
 
-                deltas = np.zeros((c_batch_size)) #Change to empty for speed-up.
-                critic_y = np.zeros((c_batch_size))
-                X = np.zeros((c_batch_size, self.D))
-                noise_acts = np.zeros((c_batch_size, 2))
+                #deltas = np.zeros((c_batch_size)) #Change to empty for speed-up.
+                #critic_y = np.zeros((c_batch_size))
+                #X = np.zeros((c_batch_size, self.D))
+                #noise_acts = np.zeros((c_batch_size, 2))
 
-                ##Create batch by taking different exploratory actions.
-                for i in range(c_batch_size):
-                    state = self.extractFeatures(win)
-                    X[i] = state
+                ###Create batch by taking different exploratory actions.
+                #for i in range(c_batch_size):
+                    #state = self.extractFeatures(win)
+                    #X[i] = state
 
-                    #Noise the action in such a way that it remains in the percentage.
-                    a = self.actor.predict(state)
-                    #print("Actor predicted: ", a)
-                    a = np.random.normal(a * (self.env.M, self.env.N), eps, 2) / (self.env.M , self.env.N) #ISSUE: Flip?
-                    a = np.maximum(np.minimum(a, 1),0).reshape(1, 2)
-                    #print("Exploratory action: ", a)
+                    ##Noise the action in such a way that it remains in the percentage.
+                    #a = self.actor.predict(state)
+                    ##print("Actor predicted: ", a)
+                    #a = np.random.normal(a * (self.env.M, self.env.N), eps, 2) / (self.env.M , self.env.N) #ISSUE: Flip?
+                    #a = np.maximum(np.minimum(a, 1),0).reshape(1, 2)
+                    ##print("Exploratory action: ", a)
 
-                    noise_acts[i] = a
-                    win, r = self.env.observe(act= a[0])
-                    succ = self.extractFeatures(win)
+                    #noise_acts[i] = a
+                    #win, r = self.env.observe(act= a[0])
+                    #succ = self.extractFeatures(win)
 
-                    deltas[i] = r + GAMMA * self.critic.predict(succ) - self.critic.predict(state)
-                    critic_y[i] = r + GAMMA * self.critic.predict(succ)
+                    #deltas[i] = r + GAMMA * self.critic.predict(succ) - self.critic.predict(state)
+                    #critic_y[i] = r + GAMMA * self.critic.predict(succ)
 
-                #X = sk.preprocessing.scale(X) ##ISSUE: Shouldn't do this, because can't replicate it at test time.
-                for epoch in range(num_epochs):
-                    self.critic.weight_update(X, critic_y.reshape(c_batch_size,1))
-                    self.actor.weight_update(X[deltas > 0], noise_acts[deltas > 0])
+                ##X = sk.preprocessing.scale(X) ##ISSUE: Shouldn't do this, because can't replicate it at test time.
+                #for epoch in range(num_epochs):
+                    #self.critic.weight_update(X, critic_y.reshape(c_batch_size,1))
+                    #self.actor.weight_update(X[deltas > 0], noise_acts[deltas > 0])
 
-                window, r = self.env.observe(act= self.actor.predict(tru_state)[0])
-                rewards.append(r)
+                #window, r = self.env.observe(act= self.actor.predict(tru_state)[0])
+                #rewards.append(r)
 
-            elif mode == 'val':
-                state = self.extractFeatures(window)
-                a = self.actor.predict(state)
-                window, r = self.env.observe(act= a[0])
-                rewards.append(r)
+            #elif mode == 'val':
+                #state = self.extractFeatures(window)
+                #a = self.actor.predict(state)
+                #window, r = self.env.observe(act= a[0])
+                #rewards.append(r)
 
-        return rewards
+        #return rewards
 
-    def train(self, human_data, c_batch_size, num_epochs= 10):
+    def train(self, human_data, c_batch_size, num_iters= 200, num_epochs= 10, subsample_factor= 2):
         print "Performing CACLA..."
 
-        #self.actor = SigNet(self.D, MEMORY**2, hidden_size= self.D*2, output_size= 2, batch_size= c_batch_size*HORIZON)
-        self.actor = SplitNet(self.D, MEMORY**2, hidden_size= self.D*2, output_size= 2, batch_size= c_batch_size*HORIZON)
-        #critic = EuclidNet(self.D, hidden_size= self.D*2, output_size= 1, batch_size= c_batch_size)
-        self.critic = EuclidNet(self.D, MEMORY**2, hidden_size= 300, output_size= 1, batch_size= c_batch_size*HORIZON)
+        D = self.D[0]
+        hid_size = int(np.prod(self.D)*(4.0/3))
+
+        #self.actor = SigNet(D, MEMORY**2, hidden_size= D*2, output_size= 2, batch_size= c_batch_size*HORIZON)
+        #self.actor = SplitNet(self.D, MEMORY**2, hidden_size= self.D*2, output_size= 2, batch_size= c_batch_size*HORIZON)
+        self.actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 2, output= 'sig', batch_size= c_batch_size*HORIZON)
+        #self.critic = EuclidNet(D, MEMORY**2, hidden_size= D*2, output_size= 1, batch_size= c_batch_size*HORIZON)
+        self.critic = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 1, output= 'euclid', batch_size= c_batch_size*HORIZON)
+
+        epoch_tsample = np.ceil(len(self.env.train_sample)/float(subsample_factor))
+        epoch_vsample = np.ceil(len(self.env.val_sample)/float(subsample_factor))
 
         #Pre-train critic on human data.
         #A, b = self.getCriticX(human_data)
@@ -587,71 +631,113 @@ class Agent():
         print "Starting iterations..."
         #rewards = []
 
-        num_iters = 200
-
         mean_train_rewards = np.zeros(num_iters)
         mean_val_rewards = np.zeros(num_iters)
+
+        cum_train_rewards = np.zeros(num_iters)
+        cum_val_rewards = np.zeros(num_iters)
+
+        total_cum_train_rewards = np.zeros(num_iters)
+        total_cum_val_rewards = np.zeros(num_iters)
 
         for it in range(num_iters):
             print("ITERATION: ", it)
 
-            trainpoints = np.random.choice(range(len(self.env.train_sample)), 3)
+            trainpoints = np.random.choice(range(len(self.env.train_sample)), epoch_tsample)
 
             train_rewards = []
             for d in trainpoints:
                 rewards = self.batch_cacla(d, c_batch_size, num_epochs, mode= 'train')
                 train_rewards.append(rewards)
 
-            valpoints = np.random.choice(range(len(self.env.val_sample)), 3)
+            valpoints = np.random.choice(range(len(self.env.val_sample)), epoch_vsample)
 
             val_rewards = []
             for d in valpoints:
                 rewards = self.batch_cacla(d, c_batch_size, num_epochs, mode= 'val')
                 val_rewards.append(rewards)
 
+            cum_train_rewards[it] = np.array(train_rewards).sum()
+            cum_val_rewards[it] = np.array(val_rewards).sum()
+
+            #total_cum_train_rewards[it] = total_cum_train_rewards.sum() +  np.array(train_rewards).sum()
+            #total_cum_val_rewards[it] = total_cum_val_rewards.sum() + np.array(val_rewards).sum()
+            total_cum_train_rewards[it] = cum_train_rewards[:it].mean()
+            total_cum_val_rewards[it] = cum_val_rewards[:it].mean()
+
             mean_train_rewards[it] = np.array(train_rewards).mean()
             mean_val_rewards[it] = np.array(val_rewards).mean()
 
-        plt.plot(mean_train_rewards, c= 'b')
-        plt.plot(mean_val_rewards, c= 'r')
+        #Plot reward metrics
+        f, (ax1, ax2, ax3) = plt.subplots(3, 1)
+        ax1.plot(mean_train_rewards, c= 'b')
+        ax1.plot(mean_val_rewards, c= 'r')
+
+        ax2.plot(cum_train_rewards, c= 'b')
+        ax2.plot(cum_val_rewards, c= 'r')
+
+        ax3.plot(total_cum_train_rewards, c= 'b')
+        ax3.plot(total_cum_val_rewards, c= 'r')
+
         plt.show()
 
         halt = True
 
-
-
-    def simulate(self):
-        #for i in range(10):
-        while True:
-            window = self.env.observe()
-            state = self.extractFeatures(window)
-            a = self.act(state)
-            self.env.update(a)
-
+    #def simulate(self):
+        ##for i in range(10):
+        #while True:
+            #window = self.env.observe()
+            #state = self.extractFeatures(window)
+            #a = self.act(state)
+            #self.env.update(a)
 
 print "RADIUS: ", RADIUS
 
-if True:
+if False:
     print "Using PCA extractor..."
-    S = sampleCAT(300, size= 0.5, asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
+    n = 300
+    #n = 10
+    S = sampleCAT(n, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
     S1 = S[:30]
     S2 = S[30:]
+    #S1 = S[:5]
+    #S2 = S[5:]
     env = Environment(S1, use_val= True)
     #D = env.getEpisodes()
-    phi = pcaExtract(200)
+    phi = pcaExtract((200,))
     phi.train(S2, 50)
     age = Agent(env, phi)
-    age.train(None, c_batch_size = 100, num_epochs= 20)
-else:
+    age.train(None, num_iters= 200, c_batch_size = 100, num_epochs= 20)
+
+elif True:
     print "Using Identity extractor..."
-    S = sampleCAT(15, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
+    n = 15
+    n = 400
+    S = sampleCAT(n, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
     env = Environment(S, use_val = True)
     #D = env.getEpisodes()
-    phi = IdentityExtract((2*RADIUS)**2)
-    age = Agent(env, phi)
-    age.train(None, c_batch_size = 10)
+    phi = IdentityExtract((1, 2*RADIUS, 2*RADIUS))
+    age = Agent(env, phi = phi)
+    age.train(None, c_batch_size = 10, num_iters= 200, subsample_factor= 3)
+
+elif False:
+    print "Using Flatten extractor..."
+    n = 10
+    #n = 300
+    S = sampleCAT(n, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
+    env = Environment(S, use_val = True)
+    #D = env.getEpisodes()
+    phi = FlattenExtract(((2*RADIUS)**2,))
+    age = Agent(env, phi = phi)
+    age.train(None, num_iters= 10, c_batch_size = 10)
 
 
 #S = sampleCAT(150, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
+
+trainpoints = np.random.choice(range(len(age.env.train_sample)), 9)
+train_rewards = []
+for d in trainpoints:
+    age.env.update(d, mode= 'train')
+    age.simulate(mode= 'train', display= 'fixmap')
 
 halt= True
