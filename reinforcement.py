@@ -431,7 +431,7 @@ class Agent():
     def batch_cacla(self, ix, c_batch_size, num_epochs, mode = 'train'):
         self.env.update(ix, mode= mode)
         #eps = 100
-        eps = 15
+        #eps = 15
 
         start_coord = np.random.uniform(0, 1, 2)
         arr = np.array([float(i)/MEMORY for i in range(MEMORY + 1)])
@@ -471,7 +471,7 @@ class Agent():
 
                     #Noise the action in such a way that it remains in the percentage.
                     a = self.actor.predict(state, mem)
-                    a = np.random.normal(a * (self.env.M, self.env.N), eps, 2) / (self.env.M , self.env.N) #ISSUE: Flip?
+                    a = np.random.normal(a * (self.env.M, self.env.N), EPSILON, 2) / (self.env.M , self.env.N) #ISSUE: Flip?
                     a = np.maximum(np.minimum(a, 1),0).reshape(1, 2)
 
                     noise_acts[i] = a
@@ -517,7 +517,7 @@ class Agent():
         #return rewards
 
 
-    def simulate(self, mode= 'train', start_coord= None, imgIdx= None, display= None):
+    def simulate(self, mode= 'train', start_coord= None, imgIdx= None, display= None, verbose= False):
         rewards = []
         arr = np.array([float(i)/MEMORY for i in range(MEMORY + 1)])
 
@@ -536,6 +536,8 @@ class Agent():
             mem = m.reshape((1, MEMORY**2))
 
             a = self.actor.predict(state, mem)[0]
+            if verbose:
+                print 'Action was: ', a
             H, _, _ = np.histogram2d([a[0]], [a[1]], bins=(arr, arr))
             m += H.astype('float32')
 
@@ -604,17 +606,34 @@ class Agent():
 
         #return rewards
 
-    def train(self, human_data, c_batch_size, num_iters= 200, num_epochs= 10, subsample_factor= 2):
+    def train(self, human_data, arc, c_batch_size, num_iters= 200, num_epochs= 10, subsample_factor= 2):
         print "Performing CACLA..."
+        reg = 1e-2
 
         D = self.D[0]
+        train_size = len(self.env.train_sample)
+        val_size = len(self.env.val_sample)
         hid_size = int(np.prod(self.D)*(4.0/3))
+
+        if arc == 0:
+            self.actor = SigNet(D, MEMORY**2, hidden_size= hid_size, output_size= 2, batch_size= c_batch_size*HORIZON)
+            self.critic = EuclidNet(D, MEMORY**2, hidden_size= hid_size, output_size= 1, batch_size= c_batch_size*HORIZON)
+
+        elif arc == 1:
+            self.actor = SplitNet(self.D, MEMORY**2, hidden_size= hid_size, output_size= 2, batch_size= c_batch_size*HORIZON)
+            self.critic = EuclidNet(D, MEMORY**2, hidden_size= hid_size, output_size= 1, batch_size= c_batch_size*HORIZON)
+
+        elif arc == 2:
+            self.actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 2, output= 'sig', batch_size= c_batch_size*HORIZON, reg= reg)
+            self.critic = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 1, output= 'euclid', batch_size= c_batch_size*HORIZON, reg= reg)
+        else:
+            assert False
 
         #self.actor = SigNet(D, MEMORY**2, hidden_size= D*2, output_size= 2, batch_size= c_batch_size*HORIZON)
         #self.actor = SplitNet(self.D, MEMORY**2, hidden_size= self.D*2, output_size= 2, batch_size= c_batch_size*HORIZON)
-        self.actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 2, output= 'sig', batch_size= c_batch_size*HORIZON)
+        #self.actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 2, output= 'sig', batch_size= c_batch_size*HORIZON, reg= reg)
         #self.critic = EuclidNet(D, MEMORY**2, hidden_size= D*2, output_size= 1, batch_size= c_batch_size*HORIZON)
-        self.critic = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 1, output= 'euclid', batch_size= c_batch_size*HORIZON)
+        #self.critic = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 1, output= 'euclid', batch_size= c_batch_size*HORIZON, reg= reg)
 
         epoch_tsample = np.ceil(len(self.env.train_sample)/float(subsample_factor))
         epoch_vsample = np.ceil(len(self.env.val_sample)/float(subsample_factor))
@@ -668,7 +687,17 @@ class Agent():
             mean_train_rewards[it] = np.array(train_rewards).mean()
             mean_val_rewards[it] = np.array(val_rewards).mean()
 
+        act_params = lasagne.layers.get_all_param_values(self.actor.network)
+        crit_params = lasagne.layers.get_all_param_values(self.actor.network)
+
+        actorid = "ACTOR-D-"+str(D)+"-rad-"+str(RADIUS)+"-mem-"+str(MEMORY)+"-reg-"+str(reg)+"-eps-"+str(EPSILON)+"-ts-"+str(train_size)+"-vs-"+str(val_size)+"-id-"+self.actor.return_id()
+        criticid = "CRITIC-D-"+str(D)+"-rad-"+str(RADIUS)+"-mem-"+str(MEMORY)+"-reg-"+str(reg)+"-eps-"+str(EPSILON)+"-ts-"+str(train_size)+"-vs-"+str(val_size)+"-id-"+self.critic.return_id()
+
+        np.savez('params/'+actorid, act_params)
+        np.savez('params/'+criticid, crit_params)
+
         #Plot reward metrics
+
         f, (ax1, ax2, ax3) = plt.subplots(3, 1)
         ax1.plot(mean_train_rewards, c= 'b')
         ax1.plot(mean_val_rewards, c= 'r')
@@ -707,18 +736,19 @@ if False:
     phi = pcaExtract((200,))
     phi.train(S2, 50)
     age = Agent(env, phi)
-    age.train(None, num_iters= 200, c_batch_size = 100, num_epochs= 20)
+    age.train(None, 1, num_iters= 200, c_batch_size = 100, num_epochs= 20)
 
-elif True:
+elif False:
     print "Using Identity extractor..."
-    n = 15
-    n = 400
+    #n = 15
+    n = 300
+    #n = 500
     S = sampleCAT(n, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
     env = Environment(S, use_val = True)
     #D = env.getEpisodes()
     phi = IdentityExtract((1, 2*RADIUS, 2*RADIUS))
     age = Agent(env, phi = phi)
-    age.train(None, c_batch_size = 10, num_iters= 200, subsample_factor= 3)
+    age.train(None, 2, c_batch_size = 10, num_iters= 200, subsample_factor= 3)
 
 elif False:
     print "Using Flatten extractor..."
@@ -729,15 +759,43 @@ elif False:
     #D = env.getEpisodes()
     phi = FlattenExtract(((2*RADIUS)**2,))
     age = Agent(env, phi = phi)
-    age.train(None, num_iters= 10, c_batch_size = 10)
+    age.train(None, 0, num_iters= 10, c_batch_size = 10)
+else:
+    print "Load model from memory..."
+    n = 5
+    #n = 500
+    S = sampleCAT(n, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
+
+    env = Environment(S, use_val = True)
+    phi = IdentityExtract((1, 2*RADIUS, 2*RADIUS))
+    age = Agent(env, phi = phi)
+
+    list_params = np.load('params/ACTOR-D-1-rad-10-mem-6-reg-0.01-eps-15-ts-266-vs-134-id-csn.npz')
+    list_params = list_params.items()[0][1]
+    c_batch_size = 10
+
+    hid_size = int(np.prod(age.D)*(4.0/3))
+    age.actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 2, output= 'sig', batch_size= c_batch_size*HORIZON, reg= 0.0)
+
+    lasagne.layers.set_all_param_values(age.actor.network, list_params)
+
+    halt= True
 
 
 #S = sampleCAT(150, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
 
-trainpoints = np.random.choice(range(len(age.env.train_sample)), 9)
-train_rewards = []
-for d in trainpoints:
-    age.env.update(d, mode= 'train')
-    age.simulate(mode= 'train', display= 'fixmap')
+if False:
+    trainpoints = np.random.choice(range(len(age.env.train_sample)), 9)
+    train_rewards = []
+    for d in trainpoints:
+        age.env.update(d, mode= 'train')
+        age.simulate(mode= 'train', display= 'fixmap', verbose= True)
+else:
+    valpoints = np.random.choice(range(len(age.env.val_sample)), 3)
+    train_rewards = []
+    for d in valpoints:
+        age.env.update(d, mode= 'val')
+        age.simulate(mode= 'val', display= 'fixmap', verbose= True)
+
 
 halt= True
