@@ -4,6 +4,8 @@ import numpy as np
 import sklearn as sk
 import sklearn.decomposition as deco
 
+import time
+
 from networks import *
 
 #from fc_net import TwoLayerNet
@@ -63,14 +65,15 @@ GAMMA = 0.95
 
 
 class Environment():
-    def __init__(self, sample, use_val):
+    def __init__(self, sample, sample_val= None):
         #self.sample = sample
-        if use_val:
+        if sample_val is None:
             train_sample, val_sample = np.array_split(sample, [len(sample)*(2.0/3)])
             self.train_sample = train_sample
             self.val_sample = val_sample
         else:
             self.train_sample = sample
+            self.val_sample = sample_val
 
         self.currTrial = sample[0]
         #self.currImg = self.currTrial.image
@@ -147,9 +150,9 @@ class Environment():
 
         if display is not None:
             if display == 'img':
-                disp = img
+                disp = -1 * img
             elif display == 'fixmap':
-                disp = fixmap
+                disp = -1 * fixmap
 
             plt.imshow(disp, cmap= cm, interpolation='nearest')
             plt.scatter(x, y)
@@ -456,6 +459,8 @@ class Agent():
 
             for b in range(c_batch_size):
 
+                a_prev = None
+
                 m = np.zeros((MEMORY, MEMORY))
                 for t in range(HORIZON):
                     i = b*HORIZON + t
@@ -478,6 +483,10 @@ class Agent():
                     window, r = self.env.observe(act= a[0])
                     succ = self.phi.transform(window)
 
+                    #if a_prev is not None:
+                        #if np.linalg.norm(a - a_prev) < 0.25:
+                            #r -= 200
+
                     #Update m here:
                     H, _, _ = np.histogram2d([a[0, 0]], [a[0, 1]], bins=(arr, arr))
                     m += H.astype('float32')
@@ -488,6 +497,8 @@ class Agent():
                     deltas[i] = r + GAMMA * self.critic.predict(succ, mem_succ) - self.critic.predict(state, mem)
                     critic_y[i] = r + GAMMA * self.critic.predict(succ, mem_succ)
 
+                    #a_prev = a
+
             m = np.zeros((MEMORY, MEMORY))
             for epoch in range(num_epochs):
                 self.critic.weight_update(X, M, critic_y.reshape(HORIZON*c_batch_size,1))
@@ -495,7 +506,7 @@ class Agent():
 
             #print "Num positive states: ", X[deltas > 0].shape[0]
 
-        rewards = self.simulate(start_coord=start_coord)
+        rewards, _ = self.simulate(start_coord=start_coord)
         return rewards
         #rewards = []
         #m = np.zeros((MEMORY, MEMORY))
@@ -519,6 +530,7 @@ class Agent():
 
     def simulate(self, mode= 'train', start_coord= None, imgIdx= None, display= None, verbose= False):
         rewards = []
+        actions = []
         arr = np.array([float(i)/MEMORY for i in range(MEMORY + 1)])
 
         if imgIdx is not None:
@@ -538,13 +550,15 @@ class Agent():
             a = self.actor.predict(state, mem)[0]
             if verbose:
                 print 'Action was: ', a
+            actions.append(a)
+
             H, _, _ = np.histogram2d([a[0]], [a[1]], bins=(arr, arr))
             m += H.astype('float32')
 
             window, r = self.env.observe(act= a, display= display)
             rewards.append(r)
 
-        return rewards
+        return rewards, actions
 
 
     #def cacla(self, ix, mode, c_batch_size, num_epochs):
@@ -606,7 +620,7 @@ class Agent():
 
         #return rewards
 
-    def train(self, human_data, arc, c_batch_size, num_iters= 200, num_epochs= 10, subsample_factor= 2):
+    def train(self, human_data, arc, c_batch_size, num_iters= 200, num_epochs= 10, start_iter= 0, display= False, save= True):
         print "Performing CACLA..."
         reg = 1e-2
 
@@ -635,9 +649,6 @@ class Agent():
         #self.critic = EuclidNet(D, MEMORY**2, hidden_size= D*2, output_size= 1, batch_size= c_batch_size*HORIZON)
         #self.critic = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 1, output= 'euclid', batch_size= c_batch_size*HORIZON, reg= reg)
 
-        epoch_tsample = np.ceil(len(self.env.train_sample)/float(subsample_factor))
-        epoch_vsample = np.ceil(len(self.env.val_sample)/float(subsample_factor))
-
         #Pre-train critic on human data.
         #A, b = self.getCriticX(human_data)
         #N = A.shape[0]
@@ -662,17 +673,17 @@ class Agent():
         for it in range(num_iters):
             print("ITERATION: ", it)
 
-            trainpoints = np.random.choice(range(len(self.env.train_sample)), epoch_tsample)
+            #trainpoints = np.random.choice(range(len(self.env.train_sample)), epoch_tsample)
 
             train_rewards = []
-            for d in trainpoints:
+            for d in range(train_size):
                 rewards = self.batch_cacla(d, c_batch_size, num_epochs, mode= 'train')
                 train_rewards.append(rewards)
 
-            valpoints = np.random.choice(range(len(self.env.val_sample)), epoch_vsample)
+            #valpoints = np.random.choice(range(len(self.env.val_sample)), epoch_vsample)
 
             val_rewards = []
-            for d in valpoints:
+            for d in range(val_size):
                 rewards = self.batch_cacla(d, c_batch_size, num_epochs, mode= 'val')
                 val_rewards.append(rewards)
 
@@ -687,28 +698,47 @@ class Agent():
             mean_train_rewards[it] = np.array(train_rewards).mean()
             mean_val_rewards[it] = np.array(val_rewards).mean()
 
-        act_params = lasagne.layers.get_all_param_values(self.actor.network)
-        crit_params = lasagne.layers.get_all_param_values(self.actor.network)
+        if save == True:
+            folder_name = time.strftime("%d-%m-%Y")+'_'+(time.strftime("%H-%M-%S"))
+            os.mkdir('models/'+folder_name)
 
-        actorid = "ACTOR-D-"+str(D)+"-rad-"+str(RADIUS)+"-mem-"+str(MEMORY)+"-reg-"+str(reg)+"-eps-"+str(EPSILON)+"-ts-"+str(train_size)+"-vs-"+str(val_size)+"-id-"+self.actor.return_id()
-        criticid = "CRITIC-D-"+str(D)+"-rad-"+str(RADIUS)+"-mem-"+str(MEMORY)+"-reg-"+str(reg)+"-eps-"+str(EPSILON)+"-ts-"+str(train_size)+"-vs-"+str(val_size)+"-id-"+self.critic.return_id()
+            act_params = lasagne.layers.get_all_param_values(self.actor.network)
+            crit_params = lasagne.layers.get_all_param_values(self.actor.network)
 
-        np.savez('params/'+actorid, act_params)
-        np.savez('params/'+criticid, crit_params)
+            epochs = str(num_iters + start_iter)
+
+            actorid = "ACTOR-D-"+str(D)+"-rad-"+str(RADIUS)+"R_THRESH"+str(R_THRESH)+"-mem-"+str(MEMORY)+"-reg-"+str(reg)+"-eps-"+str(EPSILON)+"-ts-"+str(train_size)+"-vs-"+str(val_size)+"-epochs-"+epochs+"-id-"+self.actor.return_id()
+            criticid = "CRITIC-D-"+str(D)+"-rad-"+str(RADIUS)+"R_THRESH"+str(R_THRESH)+"-mem-"+str(MEMORY)+"-reg-"+str(reg)+"-eps-"+str(EPSILON)+"-ts-"+str(train_size)+"-vs-"+str(val_size)+"-epochs-"+epochs+"-id-"+self.critic.return_id()
+
+            np.savez('models/'+folder_name+'/mean_train_rewards', mean_train_rewards)
+            np.savez('models/'+folder_name+'/mean_val_rewards', mean_val_rewards)
+
+            np.savez('models/'+folder_name+'/cum_train_rewards', cum_train_rewards)
+            np.savez('models/'+folder_name+'/cum_val_rewards', cum_val_rewards)
+
+            np.savez('models/'+folder_name+'/total_cum_train_rewards', total_cum_train_rewards)
+            np.savez('models/'+folder_name+'/total_cum_val_rewards', total_cum_val_rewards)
+
+            np.savez('models/'+folder_name+'/'+actorid, act_params)
+            np.savez('models/'+folder_name+'/'+criticid, crit_params)
+
+            np.savez('models/'+folder_name+'/'+'train_set', self.env.train_sample)
+            np.savez('models/'+folder_name+'/'+'val_set', self.env.val_sample)
 
         #Plot reward metrics
 
-        f, (ax1, ax2, ax3) = plt.subplots(3, 1)
-        ax1.plot(mean_train_rewards, c= 'b')
-        ax1.plot(mean_val_rewards, c= 'r')
+        if display:
+            f, (ax1, ax2, ax3) = plt.subplots(3, 1)
+            ax1.plot(mean_train_rewards, c= 'b')
+            ax1.plot(mean_val_rewards, c= 'r')
 
-        ax2.plot(cum_train_rewards, c= 'b')
-        ax2.plot(cum_val_rewards, c= 'r')
+            ax2.plot(cum_train_rewards, c= 'b')
+            ax2.plot(cum_val_rewards, c= 'r')
 
-        ax3.plot(total_cum_train_rewards, c= 'b')
-        ax3.plot(total_cum_val_rewards, c= 'r')
+            ax3.plot(total_cum_train_rewards, c= 'b')
+            ax3.plot(total_cum_val_rewards, c= 'r')
 
-        plt.show()
+            plt.show()
 
         halt = True
 
@@ -721,6 +751,12 @@ class Agent():
             #self.env.update(a)
 
 print "RADIUS: ", RADIUS
+
+#CAT_COUNT_TRAIN = {'Action':5, 'Object':5}
+#CAT_COUNT_VAL = {'Action':5, 'Object':5}
+
+CAT_COUNT_TRAIN = {'Random':5, 'OutdoorManMade':5, 'Social':5}
+CAT_COUNT_VAL = {'Action':5, 'Object':5, 'Social':5}
 
 if False:
     print "Using PCA extractor..."
@@ -750,32 +786,61 @@ elif False:
     age = Agent(env, phi = phi)
     age.train(None, 2, c_batch_size = 10, num_iters= 200, subsample_factor= 3)
 
-elif False:
+elif True:
     print "Using Flatten extractor..."
     n = 10
     #n = 300
-    S = sampleCAT(n, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
-    env = Environment(S, use_val = True)
+    #S = sampleCAT(n, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
+    S_train = exactCAT(CAT_COUNT_TRAIN, 'train', size= (256, 256), asgray= True)
+    S_val = exactCAT(CAT_COUNT_VAL, 'val', size= (256, 256), asgray= True)
+
+    env = Environment(S_train, S_val)
     #D = env.getEpisodes()
     phi = FlattenExtract(((2*RADIUS)**2,))
     age = Agent(env, phi = phi)
-    age.train(None, 0, num_iters= 10, c_batch_size = 10)
+    age.train(None, 1, num_iters= 10, c_batch_size = 10)
 else:
     print "Load model from memory..."
     n = 5
     #n = 500
-    S = sampleCAT(n, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
+    #S = sampleCAT(n, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
 
-    env = Environment(S, use_val = True)
-    phi = IdentityExtract((1, 2*RADIUS, 2*RADIUS))
-    age = Agent(env, phi = phi)
+    #env = Environment(S, use_val = True)
+    S_train = exactCAT(CAT_COUNT_TRAIN, 'train', size= (256, 256), asgray= True)
+    S_val = exactCAT(CAT_COUNT_VAL, 'val', size= (256, 256), asgray= True)
+    env = Environment(S_train, S_val)
 
-    list_params = np.load('params/ACTOR-D-1-rad-10-mem-6-reg-0.01-eps-15-ts-266-vs-134-id-csn.npz')
+    #phi = IdentityExtract((1, 2*RADIUS, 2*RADIUS))
+    arc = 0
+    if arc == 0:
+        phi = IdentityExtract((1, 2*RADIUS, 2*RADIUS))
+
+        age.actor = SigNet(D, MEMORY**2, hidden_size= hid_size, output_size= 2, batch_size= c_batch_size*HORIZON)
+        age.critic = EuclidNet(D, MEMORY**2, hidden_size= hid_size, output_size= 1, batch_size= c_batch_size*HORIZON)
+
+    elif arc == 1:
+        phi = FlattenExtract(((2*RADIUS)**2,))
+        age = Agent(env, phi = phi)
+
+        age.actor = SplitNet(D, MEMORY**2, hidden_size= hid_size, output_size= 2, batch_size= c_batch_size*HORIZON)
+        age.critic = EuclidNet(D, MEMORY**2, hidden_size= hid_size, output_size= 1, batch_size= c_batch_size*HORIZON)
+
+    elif arc == 2:
+        phi = IdentityExtract((1, 2*RADIUS, 2*RADIUS))
+        age = Agent(env, phi = phi)
+
+        age.actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 2, output= 'sig', batch_size= c_batch_size*HORIZON, reg= reg)
+        age.critic = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 1, output= 'euclid', batch_size= c_batch_size*HORIZON, reg= reg)
+    else:
+        assert False
+
+    list_params = np.load('models/25-02-2016_19-00-57/ACTOR-D-400-rad-10R_THRESH100-mem-6-reg-0.01-eps-45-ts-10-vs-10-epochs-30-id-sig.npz')
     list_params = list_params.items()[0][1]
     c_batch_size = 10
 
     hid_size = int(np.prod(age.D)*(4.0/3))
-    age.actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 2, output= 'sig', batch_size= c_batch_size*HORIZON, reg= 0.0)
+    #age.actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 2, output= 'sig', batch_size= c_batch_size*HORIZON, reg= 0.0)
+    #age.actor = SigNet(age.D[0], MEMORY**2, hidden_size= hid_size, output_size= 2, batch_size= c_batch_size*HORIZON)
 
     lasagne.layers.set_all_param_values(age.actor.network, list_params)
 
@@ -784,18 +849,59 @@ else:
 
 #S = sampleCAT(150, size= (256, 256), asgray= True, categories= ['Action', 'Indoor', 'Sketch', 'Object', 'Affective'])
 
-if False:
-    trainpoints = np.random.choice(range(len(age.env.train_sample)), 9)
+if True:
+    #trainpoints = np.random.choice(range(len(age.env.train_sample)), 9)
     train_rewards = []
-    for d in trainpoints:
+    for d in range(len(age.env.train_sample)):
         age.env.update(d, mode= 'train')
-        age.simulate(mode= 'train', display= 'fixmap', verbose= True)
+        rewards, actions = age.simulate(mode= 'train', display= 'fixmap', verbose= True)
+
+        A = np.array(actions)
+        A = A * [age.env.M, age.env.N]
+
+        plt.imshow(-1 * age.env.currTrial.image, cmap = 'Greys')
+        plt.plot(A[:,0], A[:,1])
+        plt.show()
+
+        halt= True
 else:
-    valpoints = np.random.choice(range(len(age.env.val_sample)), 3)
+    #valpoints = np.random.choice(range(len(age.env.val_sample)), 3)
     train_rewards = []
-    for d in valpoints:
+    for d in range(len(age.env.val_sample)):
         age.env.update(d, mode= 'val')
-        age.simulate(mode= 'val', display= 'fixmap', verbose= True)
+        rewards, actions = age.simulate(mode= 'val', display= 'fixmap', verbose= True)
+
+
+def loadRewardPlots(path):
+    mtr = np.load(path+'/mean_train_rewards.npz')
+    mean_train_rewards = mtr.items()[0][1]
+
+    mvr = np.load(path+'/mean_val_rewards.npz')
+    mean_val_rewards = mvr.items()[0][1]
+
+    ctr = np.load(path+'/cum_train_rewards.npz')
+    cum_train_rewards = ctr.items()[0][1]
+
+    cvr = np.load(path+'/cum_val_rewards.npz')
+    cum_val_rewards = cvr.items()[0][1]
+
+    tctr = np.load(path+'/total_cum_train_rewards.npz')
+    total_cum_train_rewards = tctr.items()[0][1]
+
+    tcvr = np.load(path+'/total_cum_val_rewards.npz')
+    total_cum_val_rewards = tcvr.items()[0][1]
+
+    f, (ax1, ax2, ax3) = plt.subplots(3, 1)
+    ax1.plot(mean_train_rewards, c= 'b')
+    ax1.plot(mean_val_rewards, c= 'r')
+
+    ax2.plot(cum_train_rewards, c= 'b')
+    ax2.plot(cum_val_rewards, c= 'r')
+
+    ax3.plot(total_cum_train_rewards, c= 'b')
+    ax3.plot(total_cum_val_rewards, c= 'r')
+
+    plt.show()
 
 
 halt= True
