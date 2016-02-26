@@ -14,7 +14,10 @@ import scipy.ndimage
 
 #RADIUS = 42 #If images are 256x256 and HORIZON is 9, RADIUS should be 42.
 RADIUS = 10
+EPSILON = 45
+MEMORY = 6
 HORIZON = 9
+R_THRESH = 150
 
 ##ISSUE: should do more pre-processing. Subtract mean images. etc.
 
@@ -32,7 +35,10 @@ class Trial():
         self.fixmap = fixmap
         if center_fm: #ISSUE: Change this when add in color channels?
             fm = fixmap.astype(float)
-            self.fixmap = (fm - fm.mean())/fm.std()
+            #self.fixmap = (fm - fm.mean())/fm.std()
+            mask = (fm > R_THRESH).astype('float')
+            self.fixmap = fm * mask
+            self.fixmap[self.fixmap == 0] = -1
 
         self.trajs = trajs
         self.sequence = {}
@@ -177,11 +183,43 @@ def cropImage(img, fix):
     crop_fix = fix[xs[0]:xs[-1], ys[0]:ys[-1]]
     return crop_img, crop_fix
 
+def exactCAT(cat_counts, mode, size= 1.0, asgray= False, get_seqs= False):
+    """
+    0-49 are training.
+    50-74 are val.
+    74-99 are test.
+    """
+    n = np.array(cat_counts.values()).sum()
+    if mode == 'train':
+        startIdx = 0
+    elif mode == 'val':
+        startIdx = 50
+    elif mode == 'test':
+        startIdx = 75
+
+    sample = []
+    c = 0.0
+    for cat, count in cat_counts.items():
+        stimDir = os.listdir("./CATdata/Stimuli/"+cat)[1:-1]
+        trajDir = os.listdir("./CATdata/FIXATIONTRAJS/"+cat)[1:]
+
+        for pick in range(startIdx,startIdx + count):
+            c += 1
+            if c % 10 == 0:
+                print("Image {:,.1f} of {:,.1f}".format(c, n))
+
+            t = loadTrial(pick, cat, stimDir, trajDir, size, asgray, get_seqs)
+            sample.append(t)
+
+    return sample
+
+
+        #catSize = len(stimDir)
+        #picks= np.random.choice(np.arange(catSize-1), count, replace= False)
+
+
 def sampleCAT(n = 1000, size= 1.0, asgray= False, categories= None, get_seqs= False):
     """
-    WARNING: resizing the image will mess up the fixation points.
-
-    I should convert human fixations to percentages, because then it will be scale invariant.
     """
     #assert type(size) is float
     sample= []
@@ -203,31 +241,57 @@ def sampleCAT(n = 1000, size= 1.0, asgray= False, categories= None, get_seqs= Fa
             c += 1
             if c % 10 == 0:
                 print("Image {:,.1f} of {:,.1f}".format(c, n))
+
+            t = loadTrial(pick, cat, stimDir, trajDir, size, asgray, get_seqs)
+            sample.append(t)
             #IMG = scipy.ndimage.imread('./CATdata/Stimuli/'+cat+'/'+stimDir[pick])
             #fixmap = scipy.ndimage.imread('./CATdata/FIXATIONMAPS/'+cat+'/'+stimDir[pick])
-            IMG = plt.imread('./CATdata/Stimuli/'+cat+'/'+stimDir[pick])
-            fixmap = plt.imread('./CATdata/FIXATIONMAPS/'+cat+'/'+stimDir[pick])
+            #IMG = plt.imread('./CATdata/Stimuli/'+cat+'/'+stimDir[pick])
+            #fixmap = plt.imread('./CATdata/FIXATIONMAPS/'+cat+'/'+stimDir[pick])
 
-            #Pre-processing
-            if len(IMG.shape) == 2:
-                IMG = np.asarray(np.dstack((IMG, IMG, IMG)))
+            ##Pre-processing
+            #if len(IMG.shape) == 2:
+                #IMG = np.asarray(np.dstack((IMG, IMG, IMG)))
 
-            IMG, fixmap = cropImage(IMG, fixmap)
-            if asgray:
-                IMG = mpl.colors.rgb_to_hsv(IMG)[:,:,2]
+            #IMG, fixmap = cropImage(IMG, fixmap)
+            #if asgray:
+                #IMG = mpl.colors.rgb_to_hsv(IMG)[:,:,2]
 
-            orig_shape = IMG.shape
-            IMG = scipy.misc.imresize(IMG, size)
-            fixmap = scipy.misc.imresize(fixmap, size)
+            #orig_shape = IMG.shape
+            #IMG = scipy.misc.imresize(IMG, size)
+            #fixmap = scipy.misc.imresize(fixmap, size)
 
-            M = scipy.io.loadmat('./CATdata/FIXATIONTRAJS/'+cat+'/'+trajDir[pick])['cellVal'][0][0]
-            trajs = {k[0][0][0][0][0]:k[0][0][0][1] for k in M if k[0][0][0][1].size != 0}
+            #M = scipy.io.loadmat('./CATdata/FIXATIONTRAJS/'+cat+'/'+trajDir[pick])['cellVal'][0][0]
+            #trajs = {k[0][0][0][0][0]:k[0][0][0][1] for k in M if k[0][0][0][1].size != 0}
 
-            t = Trial(cat, trajDir[pick].split('.')[0], IMG, fixmap, trajs, orig_shape, get_seqs= get_seqs)
+            #t = Trial(cat, trajDir[pick].split('.')[0], IMG, fixmap, trajs, orig_shape, get_seqs= get_seqs)
             #t.removeInvalids() #ISSUE: Assumption
 
             #t.visualize(displayFix= True)
 
-            sample.append(t)
+            #sample.append(t)
 
     return sample
+
+def loadTrial(pick, cat, stimDir, trajDir, size, asgray, get_seqs):
+    IMG = plt.imread('./CATdata/Stimuli/'+cat+'/'+stimDir[pick])
+    fixmap = plt.imread('./CATdata/FIXATIONMAPS/'+cat+'/'+stimDir[pick])
+
+    #Pre-processing
+    if len(IMG.shape) == 2:
+        IMG = np.asarray(np.dstack((IMG, IMG, IMG)))
+
+    IMG, fixmap = cropImage(IMG, fixmap)
+    if asgray:
+        IMG = mpl.colors.rgb_to_hsv(IMG)[:,:,2]
+
+    orig_shape = IMG.shape
+    IMG = scipy.misc.imresize(IMG, size)
+    fixmap = scipy.misc.imresize(fixmap, size)
+
+    M = scipy.io.loadmat('./CATdata/FIXATIONTRAJS/'+cat+'/'+trajDir[pick])['cellVal'][0][0]
+    trajs = {k[0][0][0][0][0]:k[0][0][0][1] for k in M if k[0][0][0][1].size != 0}
+
+    t = Trial(cat, trajDir[pick].split('.')[0], IMG, fixmap, trajs, orig_shape, get_seqs= get_seqs)
+
+    return t
