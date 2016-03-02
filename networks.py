@@ -1,6 +1,9 @@
 import numpy as np
 from matplotlib import pyplot as plt
 
+import time
+import os
+
 import theano
 import theano.tensor as T
 
@@ -62,6 +65,9 @@ class NeuralNet(object):
         self.y = T.matrix('targets')
         self.network = None
 
+    def return_id(self):
+        raise NotImplemented
+
     def initiliaze(self, mode= 'regress'):
         """
         Create the rest of the attributes/methods after a computational graph has been created.
@@ -87,7 +93,7 @@ class NeuralNet(object):
             loss = self.objective(lasagne.layers.get_output(self.network, deterministic= False), self.y)
             loss = loss.mean() + self.penalty
 
-            test_prediction = self.objective(self.network, deterministic= True)
+            test_prediction = lasagne.layers.get_output(self.network, deterministic= True)
             test_loss = lasagne.objectives.multiclass_hinge_loss(test_prediction, self.y)
             test_loss = test_loss.mean() + self.penalty
 
@@ -120,7 +126,7 @@ class NeuralNet(object):
 
     def print_accuracy(self, X, Y):
         N = X.shape[0]
-        batch_size = 200
+        batch_size = 10
         accs = []
         for i in range(0, N, batch_size):
             #print("batch: ", i)
@@ -136,7 +142,7 @@ class NeuralNet(object):
         accs = np.array(accs)
         print("Accuracy is: ", accs.mean())
 
-    def train(self, X_train, y_train, X_val, y_val, num_epochs):
+    def train(self, X_train, y_train, X_val, y_val, num_epochs, save= False):
         #input_var = self.x
         #target_var = self.y
 
@@ -148,6 +154,7 @@ class NeuralNet(object):
         #updates = lasagne.updates.sgd(loss, params, learning_rate= 1e-10)
 
         #train_fn = theano.function([input_var, target_var], loss, updates=updates)
+        folder_name = None
 
         for epoch in range(num_epochs):
             train_loss = 0.0
@@ -175,11 +182,22 @@ class NeuralNet(object):
 
             print("EPOCH: {:,.1f}".format(epoch))
             print("  training loss:\t\t{:.6f}".format(train_loss / train_batches))
-            if (epoch+1) % 10 == 0:
+            if (epoch+1) % 5 == 0:
                 print "Train Accuracy: "
                 self.print_accuracy(X_train, y_train)
                 print "Validation Accuracy: "
                 self.print_accuracy(X_val, y_val)
+
+                if save == True:
+                    if folder_name is None:
+                        folder_name = time.strftime("%d-%m-%Y")+'_'+(time.strftime("%H-%M-%S"))
+                        os.mkdir('classif_models/'+folder_name)
+
+                    weights = lasagne.layers.get_all_param_values(self.network)
+
+                    title = str(type(self))[8:-2]+"-epoch-"+str(epoch)
+                    np.savez('classif_models/'+folder_name+'/'+title, weights)
+
 
             #print("  validation loss:\t\t{:.6f}".format(val_err / val_batches))
 
@@ -228,8 +246,11 @@ class SigNet(NeuralNet):
 
         self.initiliaze()
 
+    def return_id(self):
+        return 'sig'
+
 class SplitNet(NeuralNet):
-    def __init__(self, n_features1, n_features2, hidden_size, output_size, batch_size, use_batch_norm= False, reg= 0.0):
+    def __init__(self, n_features1, n_features2, hidden_size, output_size, batch_size, output= 'sig', use_batch_norm= False, reg= 0.0):
         NeuralNet.__init__(self)
         self.batch_size = batch_size
 
@@ -263,10 +284,16 @@ class SplitNet(NeuralNet):
             W=lasagne.init.GlorotUniform())
 
         #Might optimize this by performing nonlinearity and affine transform in one layer.
-        l_out = lasagne.layers.DenseLayer(
-            l_hid3, num_units= output_size,
-            nonlinearity=lasagne.nonlinearities.sigmoid,
-            W=lasagne.init.GlorotUniform())
+        if output == 'sig':
+            l_out = lasagne.layers.DenseLayer(
+                l_hid3, num_units= output_size,
+                nonlinearity=lasagne.nonlinearities.sigmoid,
+                W=lasagne.init.GlorotUniform())
+        elif output == 'euclid':
+            l_out = lasagne.layers.DenseLayer(
+                l_hid3, num_units= output_size,
+                nonlinearity=lasagne.nonlinearities.linear,
+                W=lasagne.init.GlorotUniform())
 
         self.layers = [l_in1, l_hid1, l_in2, l_hid2, l_cat, l_hid3, l_out]
         self.network = l_out
@@ -274,6 +301,9 @@ class SplitNet(NeuralNet):
         self.penalty = lasagne.regularization.regularize_network_params(self.layers, penalty= lasagne.regularization.l2) * reg
 
         self.initiliaze()
+
+    def return_id(self):
+        return 'split'
 
 class ConvSplitNet(NeuralNet):
     def __init__(self, height, width, channels, n_features2,
@@ -346,6 +376,9 @@ class ConvSplitNet(NeuralNet):
         self.penalty = lasagne.regularization.regularize_network_params(self.layers, penalty= lasagne.regularization.l2) * reg
 
         self.initiliaze(mode= 'regress')
+
+    def return_id(self):
+        return 'csn'
 
 
 class MultiConvSplitNet(NeuralNet):
@@ -434,6 +467,9 @@ class MultiConvSplitNet(NeuralNet):
 
         self.initiliaze()
 
+    def return_id(self):
+        return 'mcsn'
+
 class EuclidNet(NeuralNet):
     def __init__(self, n_features1, n_features2, hidden_size, output_size, batch_size, reg= 0.0):
         NeuralNet.__init__(self)
@@ -472,9 +508,13 @@ class EuclidNet(NeuralNet):
 
         self.initiliaze()
 
+    def return_id(self):
+        return 'euc'
+
 class ConvBaseline(NeuralNet):
     def __init__(self, height, width, channels, hidden_size, output_size, batch_size,
-                 pre_conv= False, num_convpools= 2, num_hiddense= 2, pool_param= 4, num_filters= 5, reg= 1e-2):
+                 pre_conv= False, use_batchnorm= False,
+                 num_convpools= 2, num_hiddense= 2, pool_param= 4, num_filters= 5, reg= 1e-2, drop_prob = 0.5):
         NeuralNet.__init__(self)
         self.batch_size = batch_size
 
@@ -491,11 +531,16 @@ class ConvBaseline(NeuralNet):
             pre_conv = lasagne.layers.Conv2DLayer(
                 l_in, num_filters= num_filters,
                 filter_size=3, stride= 1, pad=1,
-                nonlinearity=lasagne.nonlinearities.elu,
+                nonlinearity=lasagne.nonlinearities.linear,
                 W=lasagne.init.GlorotUniform())
             self.layers.append(pre_conv)
 
-            prev_layer = pre_conv
+            if use_batchnorm:
+                pre_conv = lasagne.layers.BatchNormLayer(pre_conv)
+                self.layers.append(pre_conv)
+
+            prev_layer = lasagne.layers.NonlinearityLayer(pre_conv, nonlinearity=lasagne.nonlinearities.elu)
+
         else:
             prev_layer = l_in
 
@@ -503,26 +548,38 @@ class ConvBaseline(NeuralNet):
             conv = lasagne.layers.Conv2DLayer(
                 prev_layer, num_filters= num_filters,
                 filter_size=3, stride= 1, pad=1,
-                nonlinearity=lasagne.nonlinearities.elu,
+                nonlinearity=lasagne.nonlinearities.linear,
                 W=lasagne.init.GlorotUniform())
             self.layers.append(conv)
 
-            pool = lasagne.layers.MaxPool2DLayer(conv, pool_size= pool_param, stride= pool_param)
+            if use_batchnorm:
+                conv = lasagne.layers.BatchNormLayer(conv)
+                self.layers.append(conv)
+
+            nonlin_layer = lasagne.layers.NonlinearityLayer(conv, nonlinearity=lasagne.nonlinearities.elu)
+
+            pool = lasagne.layers.MaxPool2DLayer(nonlin_layer, pool_size= pool_param, stride= pool_param)
             self.layers.append(pool)
 
             prev_layer = pool
 
-        drop = lasagne.layers.DropoutLayer(prev_layer)
+        drop = lasagne.layers.DropoutLayer(prev_layer, p= drop_prob)
         prev_layer = drop
         for hd in range(num_hiddense):
             dense = lasagne.layers.Conv2DLayer(
                 prev_layer, num_filters= num_filters,
                 filter_size=3, stride= 1, pad=1,
-                nonlinearity=lasagne.nonlinearities.elu,
+                nonlinearity=lasagne.nonlinearities.linear,
                 W=lasagne.init.GlorotUniform())
             self.layers.append(dense)
 
-            prev_layer = dense
+            if use_batchnorm:
+                dense = lasagne.layers.BatchNormLayer(dense)
+                self.layers.append(dense)
+
+            nonlin_layer = lasagne.layers.NonlinearityLayer(dense, nonlinearity=lasagne.nonlinearities.elu)
+
+            prev_layer = nonlin_layer
 
         l_out = lasagne.layers.DenseLayer(
             dense, num_units= output_size,
