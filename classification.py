@@ -18,9 +18,8 @@ import math
 
 from loadData import RADIUS, HORIZON
 
-
-def sampleCATdata(n_examples, size, asgray, categories, get_seqs= True, shuffle= True):
-    S = sampleCAT(n_examples, size= size, asgray= asgray, categories= categories, get_seqs= get_seqs)
+def exact_sampleCATdata(cat_count, mode, size, asgray, get_seqs= None, shuffle= True):
+    S = exactCAT(cat_count, mode, size= size, asgray= asgray, get_seqs= get_seqs)
 
     X_SEQ = None
     Y_SEQ = []
@@ -37,8 +36,8 @@ def sampleCATdata(n_examples, size, asgray, categories, get_seqs= True, shuffle=
         else:
             X[i] = trial.image
 
-        Y[i] = categories.index(trial.category)
-        if get_seqs:
+        Y[i] = cat_count.keys().index(trial.category)
+        if get_seqs is not None:
             for subj, seq in trial.sequence.items():
                 if X_SEQ is None:
                     X_SEQ = np.expand_dims(seq, 0)
@@ -58,55 +57,65 @@ def sampleCATdata(n_examples, size, asgray, categories, get_seqs= True, shuffle=
         X = X[p]
         Y = Y[p]
 
-    X_train, X_val, X_test = np.array_split(X, [np.floor(0.5 * N), np.floor(0.75*N)])
-    Y_train, Y_val, Y_test = np.array_split(Y, [np.floor(0.5 * N), np.floor(0.75*N)])
-
-    if get_seqs:
+    if get_seqs is not None:
         N_SEQ = len(X_SEQ)
-        p = np.random.permutation(range(N_SEQ))
-        X_SEQ = X_SEQ[p]
-        Y_SEQ = Y_SEQ[p]
+        if shuffle:
+            p = np.random.permutation(range(N_SEQ))
+            X_SEQ = X_SEQ[p]
+            Y_SEQ = Y_SEQ[p]
 
-        X_SEQ_train, X_SEQ_val, X_SEQ_test = np.array_split(X_SEQ, [np.floor(0.5 * N_SEQ), np.floor(0.75*N_SEQ)])
-        Y_SEQ_train, Y_SEQ_val, Y_SEQ_test = np.array_split(Y_SEQ, [np.floor(0.5 * N_SEQ), np.floor(0.75*N_SEQ)])
+        return X_SEQ, Y_SEQ
 
-        return X_train, X_val, X_test, Y_train, Y_val, Y_test,\
-               X_SEQ_train, X_SEQ_val, X_SEQ_test, Y_SEQ_train, Y_SEQ_val, Y_SEQ_test
+    return X, Y
 
-    return X_train, X_val, X_test, Y_train, Y_val, Y_test
+categories = ['Action','Affective','Art','BlackWhite','Cartoon','Fractal','Indoor','Inverted',\
+              'Jumbled','LineDrawing','LowResolution','Noisy','Object','OutdoorManMade','OutdoorNatural',
+              'Pattern','Random','Satelite','Sketch','Social']
 
-if False:
-    categories= ['Action', 'Indoor', 'Object', 'Affective']
+if False: ##Load baseline for CAT2000 classification.
+    cat_count_train = {key:50 for key in categories}
+    cat_count_val = {key:25 for key in categories}
+    #cat_count_train = {'Action':10, 'Sketch':10}
+    #cat_count_val = {'Action':5, 'Sketch':5}
+
+    output_size = len(cat_count_train)
     size = (256, 256)
-    N = 100
-    #X_train, X_val, X_test, Y_train, Y_val, Y_test,\
-    #X_SEQ_train, X_SEQ_val, X_SEQ_test, Y_SEQ_train, Y_SEQ_val, Y_SEQ_test = sampleCATdata(N, size= size, asgray= True, categories= categories)
 
+    X_train, Y_train = exact_sampleCATdata(cat_count_train, "train", size= size, asgray= True, get_seqs= False)
+    X_val, Y_val = exact_sampleCATdata(cat_count_val, "val", size= size, asgray= True, get_seqs= False)
 
-    X_train, X_val, X_test, Y_train, Y_val, Y_test = sampleCATdata(N, size= size, asgray= True, get_seqs= False, categories= categories)
+    C = 1
+    cnn = ConvBaseline(size[0], size[1], C, 600, output_size, pool_param= 2, pre_conv= True, num_convpools= 1,
+                       use_batchnorm= True, num_hiddense= 2, batch_size= 5, num_filters= 28, reg= 2e-1, drop_prob= 0.7)
 
+elif True: ##Load SGC for CAT classification
+    #cat_count_train = {key:50 for key in categories}
+    #cat_count_val = {key:25 for key in categories}
+    cat_count_train = {'Action':15, 'Sketch':15}
+    cat_count_val = {'Action':5, 'Sketch':5}
 
-    #cnn = ConvBaseline(size[0], size[1], 1, 300, len(categories), batch_size= 10)
-    cnn = ConvBaseline(size[0], size[1], 1, 600, 10, pool_param= 2, num_convpools= 3, batch_size= 10, num_filters= 30)
-
-    #print "Constructing Recurrent CNN. This should take a bit..."
-
-    #H = 2*RADIUS
-    #rcnn = ConvLSTM(H, H, 1, HORIZON, 500, len(categories), batch_size= 10)
-    #rcnn.predict(X_SEQS_train[0:10])
-
-elif True:
-    categories= ['Action', 'Indoor', 'Object', 'Affective']
+    output_size = len(cat_count_train)
     size = (256, 256)
-    N = 100
-    X_train, X_val, X_test, Y_train, Y_val, Y_test,\
-    X_SEQ_train, X_SEQ_val, X_SEQ_test, Y_SEQ_train, Y_SEQ_val, Y_SEQ_test = sampleCATdata(N, size= size, asgray= True, categories= categories)
+
+    ##HUMAN
+    X_SEQ_train, Y_SEQ_train = exact_sampleCATdata(cat_count_train, "train", size= size, asgray= True, get_seqs= 'human')
+    X_SEQ_val, Y_SEQ_val = exact_sampleCATdata(cat_count_val, "val", size= size, asgray= True, get_seqs= 'human')
+
+    ##RANDOM
+    #X_SEQ_train, Y_SEQ_train = exact_sampleCATdata(cat_count_train, "train", size= size, asgray= True, get_seqs= 'random')
+    #X_SEQ_val, Y_SEQ_val = exact_sampleCATdata(cat_count_val, "val", size= size, asgray= True, get_seqs= 'random')
+
+    ##SALIENCY
+    #X_SEQ_train, Y_SEQ_train = exact_sampleCATdata(cat_count_train, "train", size= size, asgray= True, get_seqs= 'saliency')
+    #X_SEQ_val, Y_SEQ_val = exact_sampleCATdata(cat_count_val, "val", size= size, asgray= True, get_seqs= 'saliency')
 
     H = 2*RADIUS
-    rcnn = ConvLSTM(H, H, 1, HORIZON, 500, len(categories), batch_size= 10, reg= 0.0)
+    rcnn = ConvLSTM(H, H, 1, HORIZON, 500, output_size, batch_size= 10, reg= 0.0)
     #rcnn.predict(X_SEQS_train[0:10])
 
-else:
+    halt= True
+
+elif False: ##Load Baseline for CIFAR classification
     fo1 = open('./data/cifar-10-batches-py/data_batch_1', 'rb')
     dic1 = cPickle.load(fo1)
     fo1.close()
@@ -157,14 +166,15 @@ else:
     #cnn = ConvBaseline(32, 32, C, 500, 10, batch_size= 200, num_filters= 20)
     #cnn = ConvBaseline(32, 32, C, 600, 10, pool_param= 2, num_convpools= 3, batch_size= 200, num_filters= 30)
     #cnn = ConvBaseline(32, 32, C, 600, 10, pool_param= 2, pre_conv= True, num_convpools= 2, batch_size= 200, num_filters= 30, reg= 1e-1)
-    cnn = ConvBaseline(32, 32, C, 750, 10, pool_param= 2, pre_conv= True, num_convpools= 2, num_hiddense= 3, batch_size= 200, num_filters= 30, reg= 1e-1)
+    cnn = ConvBaseline(32, 32, C, 750, 10, pool_param= 2, pre_conv= True, num_convpools= 2, use_batchnorm= True, num_hiddense= 3, batch_size= 200, num_filters= 32, reg= 1e-1)
 
 if False:
     ##Highest CIFAR accuracy so far: ~0.21 w 20 filters, 500 hidden units, 60 epochs
     Y_train = Y_train.astype('int32')
     Y_val = Y_val.astype('int32')
 
-    cnn.train(X_train, Y_train, X_val, Y_val, num_epochs= 300) #Lower learning rate seems to make a considerable diff.
+    print "Start training..."
+    cnn.train(X_train, Y_train, X_val, Y_val, num_epochs= 300, save= True) #Lower learning rate seems to make a considerable diff.
 
     #X_train_out = cnn.predict(X_train)
     #X_train_pred = X_train_out.argmax(axis = 1)
@@ -183,13 +193,14 @@ if False:
     #print("Accuracy on validation set", acc_val)
 
 if True:
-    rcnn.train(X_SEQ_train, Y_SEQ_train, X_SEQ_val, Y_SEQ_val, num_epochs= 100)
+    rcnn.train(X_SEQ_train, Y_SEQ_train, X_SEQ_val, Y_SEQ_val, num_epochs= 10, save= False)
 
     print("TRAIN SET")
-    rcnn.print_accuracy(X_train, Y_train)
+    ##rcnn.print_accuracy(X_train, Y_train)
+    rcnn.print_accuracy(X_SEQ_train, Y_SEQ_train)
 
     print("VAL SET")
-    rcnn.print_accuracy(X_val, Y_val)
+    rcnn.print_accuracy(X_SEQ_val, Y_SEQ_val)
 
     #error = mets.accuracy_score(Y_SEQ_train, rcnn.predict(X_SEQ_train).argmax(axis = 1))
     #print("Accuracy on training set", error)
