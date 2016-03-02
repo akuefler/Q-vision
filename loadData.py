@@ -7,14 +7,19 @@ from matplotlib import pyplot as plt
 
 import math
 
+import scipy.ndimage as ndimage
+import scipy.ndimage.filters as filters
+
 import sklearn as sk
 import scipy
 import scipy.io
 import scipy.ndimage
 
 #RADIUS = 42 #If images are 256x256 and HORIZON is 9, RADIUS should be 42.
+#RADIUS = 20
 RADIUS = 10
 EPSILON = 45
+#MEMORY = 1
 MEMORY = 6
 HORIZON = 9
 R_THRESH = 150
@@ -22,7 +27,7 @@ R_THRESH = 150
 ##ISSUE: should do more pre-processing. Subtract mean images. etc.
 
 class Trial():
-    def __init__(self, cat, idx, img, fixmap, trajs, orig_shape, center_fm= True, get_seqs= False):
+    def __init__(self, cat, idx, img, fixmap, salmap, trajs, orig_shape, center_fm= True, get_seqs= False):
         self.category = cat
         self.index = idx
 
@@ -33,12 +38,17 @@ class Trial():
 
         self.image = img
         self.fixmap = fixmap
+        self.salmap = salmap
+
         if center_fm: #ISSUE: Change this when add in color channels?
             fm = fixmap.astype(float)
             #self.fixmap = (fm - fm.mean())/fm.std()
-            mask = (fm > R_THRESH).astype('float')
-            self.fixmap = fm * mask
+            mask1 = (fm > 10).astype('float')
+            mask2 = (fm < 30).astype('float')
+            #mask = (fm > R_THRESH).astype('float')
+            self.fixmap = fm * mask1 * mask2
             self.fixmap[self.fixmap == 0] = -1
+            self.fixmap[self.fixmap != -1] = 1
 
         self.trajs = trajs
         self.sequence = {}
@@ -48,68 +58,73 @@ class Trial():
         else:
             N, M, C = orig_shape
 
+        sal_N, sal_M = salmap.shape
+
         #self.imageCenter = np.array([math.floor(img.shape[0]/2), math.floor(img.shape[1]/2)])
         #self.imageCenter = np.array([math.floor(img.shape[1]/2), math.floor(img.shape[0]/2)])
 
         self.imageCenter = np.array([math.floor(M/2.0), math.floor(N/2.0)])
 
         for sub, traj in self.trajs.items():
-            self.trajs[sub] -= np.mean(self.trajs[sub], axis= 0)
-            self.trajs[sub] += self.imageCenter
+            if get_seqs == 'saliency':
+                yx = computeMaxima(self.salmap, 5, 20)
 
-            self.trajs[sub] /= np.array([M, N], dtype= float)
+                assert (yx <= 1).all()
+                assert (yx >= 0).all()
 
-            ##Remove invalids in first pass.
-            if np.isnan(traj).any():
-                self.trajs.pop(sub)
-                continue
+                picks = np.random.choice(np.arange(len(yx)), size= HORIZON, replace= False)
+                self.trajs[sub] = yx[picks]
 
-            traj = np.delete(traj, np.nonzero(traj[:,0] * M < 0), axis= 0)
-            traj = np.delete(traj, np.nonzero(traj[:,1] * N < 0), axis= 0)
-            traj = np.delete(traj, np.nonzero(traj[:,0] * M >= M), axis= 0)
-            traj = np.delete(traj, np.nonzero(traj[:,1] * N >= N), axis= 0)
-            self.trajs[sub] = traj
-
-            ##Make sure all trajectories satisfy horizon.
-            t_length = traj.shape[0]
-            if t_length < HORIZON:
-                self.trajs.pop(sub)
-                continue
-
-            elif t_length > HORIZON:
-                traj = traj[:HORIZON, :]
-
-            self.trajs[sub] = traj
-
-            if get_seqs:
                 self.sequence[sub] = np.empty((traj.shape[0], C, 2*RADIUS, 2*RADIUS))
-                for i, fix in enumerate(traj):
-                    #if np.isnan(fix).any():
-                        #continue
-
+                for i, fix in enumerate(self.trajs[sub]):
                     window = self.observe(fix)
                     self.sequence[sub][i] = np.expand_dims(window, 0)
 
+                halt= True
+
+            else:
+                self.trajs[sub] -= np.mean(self.trajs[sub], axis= 0)
+                self.trajs[sub] += self.imageCenter
+
+                self.trajs[sub] /= np.array([M, N], dtype= float)
+
+                ##Remove invalids in first pass.
+                if np.isnan(traj).any():
+                    self.trajs.pop(sub)
+                    continue
+
+                traj = np.delete(traj, np.nonzero(traj[:,0] * M < 0), axis= 0)
+                traj = np.delete(traj, np.nonzero(traj[:,1] * N < 0), axis= 0)
+                traj = np.delete(traj, np.nonzero(traj[:,0] * M >= M), axis= 0)
+                traj = np.delete(traj, np.nonzero(traj[:,1] * N >= N), axis= 0)
+                self.trajs[sub] = traj
+
+                ##Make sure all trajectories satisfy horizon.
+                t_length = traj.shape[0]
+                if t_length < HORIZON:
+                    self.trajs.pop(sub)
+                    continue
+
+                elif t_length > HORIZON:
+                    traj = traj[:HORIZON, :]
+
+                self.trajs[sub] = traj
+
+                if get_seqs == 'human':
+                    self.sequence[sub] = np.empty((traj.shape[0], C, 2*RADIUS, 2*RADIUS))
+                    for i, fix in enumerate(traj):
+                        window = self.observe(fix)
+                        self.sequence[sub][i] = np.expand_dims(window, 0)
+
+                elif get_seqs == 'random':
+                    self.sequence[sub] = np.empty((traj.shape[0], C, 2*RADIUS, 2*RADIUS))
+                    for i, _ in enumerate(traj):
+                        fix = np.random.uniform(0,1,2)
+                        window = self.observe(fix)
+                        self.sequence[sub][i] = np.expand_dims(window, 0)
+
         self.imageCenter = np.array([0.5, 0.5])
 
-    #def removeInvalids(self):
-        #r, c = self.image.shape
-        ##N, M = self.image.shape
-
-        #for sub, traj in self.trajs.items():
-            #tOld = traj.copy()
-
-            #if np.isnan(traj).any():
-                #self.trajs.pop(sub)
-                #continue
-
-            #traj = np.delete(traj, np.nonzero(traj[:,0] * c < 0), axis= 0)
-            #traj = np.delete(traj, np.nonzero(traj[:,1] * r < 0), axis= 0)
-
-            #traj = np.delete(traj, np.nonzero(traj[:,0] * c >= c), axis= 0)
-            #traj = np.delete(traj, np.nonzero(traj[:,1] * r >= r), axis= 0)
-
-            #self.trajs[sub] = traj
 
     def observe(self, act):
         N, M = self.image.shape
@@ -276,6 +291,7 @@ def sampleCAT(n = 1000, size= 1.0, asgray= False, categories= None, get_seqs= Fa
 def loadTrial(pick, cat, stimDir, trajDir, size, asgray, get_seqs):
     IMG = plt.imread('./CATdata/Stimuli/'+cat+'/'+stimDir[pick])
     fixmap = plt.imread('./CATdata/FIXATIONMAPS/'+cat+'/'+stimDir[pick])
+    salmap = plt.imread('./CATdata/STIMULI/'+cat+'/Output/'+stimDir[pick].split('.')[0]+'_SaliencyMap.jpg')
 
     #Pre-processing
     if len(IMG.shape) == 2:
@@ -290,8 +306,29 @@ def loadTrial(pick, cat, stimDir, trajDir, size, asgray, get_seqs):
     fixmap = scipy.misc.imresize(fixmap, size)
 
     M = scipy.io.loadmat('./CATdata/FIXATIONTRAJS/'+cat+'/'+trajDir[pick])['cellVal'][0][0]
-    trajs = {k[0][0][0][0][0]:k[0][0][0][1] for k in M if k[0][0][0][1].size != 0}
+    trajs = {k[0][0][0][0][0]:k[0][0][0][1] for k in M if k[0][0][0][1].size != 0 and k[0][0][0][1].dtype == float}
 
-    t = Trial(cat, trajDir[pick].split('.')[0], IMG, fixmap, trajs, orig_shape, get_seqs= get_seqs)
+    t = Trial(cat, trajDir[pick].split('.')[0], IMG, fixmap, salmap, trajs, orig_shape, get_seqs= get_seqs)
 
     return t
+
+def computeMaxima(data, neighborhood_size, threshold):
+    """
+    Based on code from:
+    http://stackoverflow.com/questions/9111711/get-coordinates-of-local-maxima-in-2d-array-above-certain-value
+    """
+    sal_N, sal_M = data.shape
+
+    data_max = filters.maximum_filter(data, neighborhood_size)
+    maxima = (data == data_max)
+    data_min = filters.minimum_filter(data, neighborhood_size)
+    diff = ((data_max - data_min) > threshold)
+    maxima[diff == 0] = 0
+
+    labeled, num_objects = ndimage.label(maxima)
+    xy = np.array(ndimage.center_of_mass(data, labeled, range(1, num_objects+1)))
+    xy /= np.array([sal_N, sal_M])
+
+    yx = np.fliplr(xy)
+
+    return yx
