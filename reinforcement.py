@@ -365,7 +365,8 @@ class Agent():
         #eps = 100
         #eps = 15
 
-        start_coord = np.random.uniform(0, 1, 2)
+        #start_coord = np.random.uniform(0, 1, 2)
+        start_coord = np.array([0.5, 0.5])
         arr = np.array([float(i)/MEMORY for i in range(MEMORY + 1)])
 
         #rewards = []
@@ -470,7 +471,8 @@ class Agent():
             self.env.update(imgIdx, mode= 'train')
 
         if start_coord is None:
-            start_coord = np.random.uniform(0, 1, 2)
+            #start_coord = np.random.uniform(0, 1, 2)
+            start_coord = np.array([0.5, 0.5])
 
         m = np.zeros((MEMORY, MEMORY))
         reward_region = copy.copy(self.env.currTrial.fixmap)
@@ -555,7 +557,7 @@ class Agent():
 
         #return rewards
 
-    def train(self, human_data, c_batch_size, num_iters= 200, num_epochs= 10, start_iter= 0, display= False, save= False):
+    def train(self, human_data, c_batch_size, num_iters= 200, num_epochs= 1, start_iter= 0, display= False, save= False):
         print "Performing CACLA..."
         reg = 1e-2
 
@@ -689,12 +691,15 @@ class Agent():
             f, (ax1, ax2, ax3) = plt.subplots(3, 1)
             ax1.plot(mean_train_rewards, c= 'b')
             ax1.plot(mean_val_rewards, c= 'r')
+            ax1.plot(mean_rand_rewards, c= 'g')
 
             ax2.plot(cum_train_rewards, c= 'b')
             ax2.plot(cum_val_rewards, c= 'r')
+            ax2.plot(cum_val_rewards, c= 'g')
 
             ax3.plot(total_cum_train_rewards, c= 'b')
             ax3.plot(total_cum_val_rewards, c= 'r')
+            ax3.plot(total_cum_val_rewards, c= 'g')
 
             plt.show()
 
@@ -737,7 +742,7 @@ def train_an_agent(phi, actor, critic, num_iters= 20, save= False, display= True
 
     env = Environment(S_train, S_val)
     age = Agent(env, actor, critic, phi= phi)
-    age.train(None, num_iters= num_iters, c_batch_size = 10, save= save)
+    age.train(None, num_iters= num_iters, c_batch_size = 10, save= save, display= display)
 
     return age
 
@@ -795,9 +800,9 @@ phi = IdentityExtract((1, 2*RADIUS, 2*RADIUS))
 c_batch_size = 10
 reg = 0.0
 hid_size= 200
-actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 2, output= 'sig', batch_size= c_batch_size*HORIZON, reg= reg)
-critic = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 1, output= 'euclid', batch_size= c_batch_size*HORIZON, reg= reg)
-age = train_an_agent(phi, actor, critic, save= True, display= True)
+actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, pre_conv= False, num_hiddense= 2, hidden_size= hid_size, output_size= 2, output= 'sig', batch_size= c_batch_size*HORIZON, reg= reg)
+critic = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, pre_conv= False, num_hiddense= 2, hidden_size= hid_size, output_size= 1, output= 'euclid', batch_size= c_batch_size*HORIZON, reg= reg)
+age = train_an_agent(phi, actor, critic, num_iters= 10, save= True, display= True)
 
 if True:
     #trainpoints = np.random.choice(range(len(age.env.train_sample)), 9)
@@ -811,6 +816,7 @@ if True:
 
         plt.imshow(-1 * age.env.currTrial.image, cmap = 'Greys')
         plt.plot(A[:,0], A[:,1])
+
         plt.show()
 
         halt= True
@@ -820,5 +826,3 @@ else:
     for d in range(len(age.env.val_sample)):
         age.env.update(d, mode= 'val')
         rewards, actions = age.simulate(mode= 'val', display= 'img', verbose= True)
-
-halt= True
