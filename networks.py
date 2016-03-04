@@ -308,7 +308,8 @@ class SplitNet(NeuralNet):
 class ConvSplitNet(NeuralNet):
     def __init__(self, height, width, channels, n_features2,
                  hidden_size, output_size, batch_size,
-                 output= 'sig',
+                 num_hiddense= 1,
+                 output= 'sig', pre_conv= False,
                  num_filters= 10, pool_param = 4,
                  use_batch_norm= False, reg= 0.0):
         NeuralNet.__init__(self)
@@ -324,8 +325,20 @@ class ConvSplitNet(NeuralNet):
                                          input_var= self.x1)
         self.layers.append(l_in1)
 
+        if pre_conv == True:
+            pre_conv_layer = lasagne.layers.Conv2DLayer(
+                l_in1, num_filters= num_filters,
+                filter_size=3, stride= 1, pad=1,
+                nonlinearity=lasagne.nonlinearities.elu,
+                W=lasagne.init.GlorotUniform())
+            self.layers.append(pre_conv_layer)
+
+            prev_layer = pre_conv_layer
+        else:
+            prev_layer = l_in1
+
         l_conv = lasagne.layers.Conv2DLayer(
-            l_in1, num_filters= num_filters,
+            prev_layer, num_filters= num_filters,
             filter_size=3, stride= 1, pad=1,
             nonlinearity=lasagne.nonlinearities.elu,
             W=lasagne.init.GlorotUniform())
@@ -351,22 +364,35 @@ class ConvSplitNet(NeuralNet):
         self.layers.append(l_cat)
 
         #Tanh layer to keep values in correct range.
-        l_hid3 = lasagne.layers.DenseLayer(
-            l_cat, num_units= hidden_size,
-            nonlinearity=lasagne.nonlinearities.tanh,
-            W=lasagne.init.GlorotUniform())
-        self.layers.append(l_hid3)
+        #l_hid3 = lasagne.layers.DenseLayer(
+            #l_cat, num_units= hidden_size,
+            #nonlinearity=lasagne.nonlinearities.tanh,
+            #W=lasagne.init.GlorotUniform())
+        #self.layers.append(l_hid3)
+
+        prev_layer = l_cat
+        for hd in range(num_hiddense):
+            dense = lasagne.layers.DenseLayer(
+                prev_layer, num_units= hidden_size,
+                nonlinearity=lasagne.nonlinearities.linear,
+                W=lasagne.init.GlorotUniform())
+            self.layers.append(dense)
+
+            #dense = lasagne.layers.BatchNormLayer(dense)
+            #self.layers.append(dense)
+
+            prev_layer = lasagne.layers.NonlinearityLayer(dense, nonlinearity=lasagne.nonlinearities.tanh)
 
         if output == 'sig':
             l_out = lasagne.layers.DenseLayer(
-                l_hid3, num_units= output_size,
+                prev_layer, num_units= output_size,
                 nonlinearity=lasagne.nonlinearities.sigmoid,
                 W=lasagne.init.GlorotUniform())
             self.layers.append(l_out)
 
         elif output == 'euclid':
             l_out = lasagne.layers.DenseLayer(
-                l_hid3, num_units= output_size,
+                prev_layer, num_units= output_size,
                 nonlinearity=lasagne.nonlinearities.linear,
                 W=lasagne.init.GlorotUniform())
             self.layers.append(l_out)
@@ -566,11 +592,17 @@ class ConvBaseline(NeuralNet):
         drop = lasagne.layers.DropoutLayer(prev_layer, p= drop_prob)
         prev_layer = drop
         for hd in range(num_hiddense):
-            dense = lasagne.layers.Conv2DLayer(
-                prev_layer, num_filters= num_filters,
-                filter_size=3, stride= 1, pad=1,
-                nonlinearity=lasagne.nonlinearities.linear,
-                W=lasagne.init.GlorotUniform())
+            ##THIS IS CONV NOT DENSE??
+            #dense = lasagne.layers.Conv2DLayer(
+                #prev_layer, num_filters= num_filters,
+                #filter_size=3, stride= 1, pad=1,
+                #nonlinearity=lasagne.nonlinearities.linear,
+                #W=lasagne.init.GlorotUniform())
+            #self.layers.append(dense)
+            dense = lasagne.layers.DenseLayer(
+                dense, num_units= hidden_size,
+                W=lasagne.init.GlorotUniform(),
+                nonlinearity=lasagne.nonlinearities.linear)
             self.layers.append(dense)
 
             if use_batchnorm:
@@ -630,9 +662,11 @@ class ConvRNN(NeuralNet):
 
         self.initiliaze(mode= 'classify')
 
+
 class ConvLSTM(NeuralNet):
     def __init__(self, height, width, channels, timesteps, hidden_size, output_size, batch_size,
-                 num_convpools= 2, num_filters= 5, reg= 0.0,
+                 num_convpools= 2, num_hiddense= 1, pre_conv= False,
+                 num_filters= 5, reg= 0.0, pool_param = 4,
                  objective= lasagne.objectives.multiclass_hinge_loss):
         """
         max pooling works well with softmax/cross entropy loss. mean works better for hinge.
@@ -653,7 +687,6 @@ class ConvLSTM(NeuralNet):
         self.layers = []
 
         n_batch, n_steps, n_channels, width, height = (batch_size, timesteps, channels, width, height)
-        n_out_filters = 7
         filter_shape = (3, 3)
 
         l_in = lasagne.layers.InputLayer(
@@ -662,51 +695,95 @@ class ConvLSTM(NeuralNet):
         self.layers.append(l_in)
 
         l_reshape1 = lasagne.layers.ReshapeLayer(l_in, (-1, l_in.output_shape[2], l_in.output_shape[3], l_in.output_shape[4]))
+        #l_reshape1 = lasagne.layers.ReshapeLayer(l_in, (7, 31))
         self.layers.append(l_reshape1)
 
-        conv = lasagne.layers.Conv2DLayer(
-            l_reshape1,
-            n_out_filters, filter_shape,
-            nonlinearity=lasagne.nonlinearities.elu, pad='same')
-        self.layers.append(conv)
+        if pre_conv == True:
+            pre_conv = lasagne.layers.Conv2DLayer(
+                l_reshape1, num_filters= num_filters,
+                filter_size=3, stride= 1, pad=1,
+                nonlinearity=lasagne.nonlinearities.linear,
+                W=lasagne.init.GlorotUniform())
+            self.layers.append(pre_conv)
 
-        pool = lasagne.layers.MaxPool2DLayer(conv, pool_size=4, stride=4)
-        self.layers.append(pool)
+            #if use_batchnorm:
+                #pre_conv = lasagne.layers.BatchNormLayer(pre_conv)
+                #self.layers.append(pre_conv)
 
-        linear = lasagne.layers.DenseLayer(pool, num_units= hidden_size, nonlinearity= lasagne.nonlinearities.elu) #This was linear.
+            prev_layer = lasagne.layers.NonlinearityLayer(pre_conv, nonlinearity=lasagne.nonlinearities.elu)
+
+        else:
+            prev_layer = l_reshape1
+
+        #conv = lasagne.layers.Conv2DLayer(
+            #prev_layer,
+            #filter_size= 3, stride= 1, pad= 1,
+            #num_filters = num_filters,
+            #nonlinearity=lasagne.nonlinearities.elu)
+        #self.layers.append(conv)
+
+        #pool = lasagne.layers.MaxPool2DLayer(conv, pool_size= pool_param, stride= pool_param)
+        #self.layers.append(pool)
+
+        for cp in range(num_convpools):
+            conv = lasagne.layers.Conv2DLayer(
+                prev_layer, num_filters= num_filters,
+                filter_size=3, stride= 1, pad=1,
+                nonlinearity=lasagne.nonlinearities.linear,
+                W=lasagne.init.GlorotUniform())
+            self.layers.append(conv)
+
+            #if use_batchnorm:
+                #conv = lasagne.layers.BatchNormLayer(conv)
+                #self.layers.append(conv)
+
+            nonlin_layer = lasagne.layers.NonlinearityLayer(conv, nonlinearity=lasagne.nonlinearities.elu)
+
+            pool = lasagne.layers.MaxPool2DLayer(nonlin_layer, pool_size= pool_param, stride= pool_param)
+            self.layers.append(pool)
+
+            prev_layer = pool
+
+        linear = lasagne.layers.DenseLayer(prev_layer, num_units= hidden_size, nonlinearity= lasagne.nonlinearities.elu) #This was linear.
         self.layers.append(linear)
 
+        #l_reshape2 = lasagne.layers.ReshapeLayer(linear, (-1, timesteps, hidden_size))
         l_reshape2 = lasagne.layers.ReshapeLayer(linear, (-1, timesteps, hidden_size))
         self.layers.append(l_reshape2)
 
-        lstm = lasagne.layers.LSTMLayer(l_reshape2, hidden_size)
+        lstm = lasagne.layers.LSTMLayer(l_reshape2, hidden_size, only_return_final= True)
         self.layers.append(lstm)
 
-        dense1 = lasagne.layers.DenseLayer(
-            pool, num_units= hidden_size,
-            nonlinearity=lasagne.nonlinearities.elu, #Rectify may be causing nans in cross entropy loss.
-            W=lasagne.init.GlorotUniform())
-        self.layers.append(dense1)
+        prev_layer = lstm
+        for hd in range(num_hiddense):
+            dense = lasagne.layers.DenseLayer(
+                prev_layer, num_units= hidden_size,
+                nonlinearity=lasagne.nonlinearities.elu, #Rectify may be causing nans in cross entropy loss.
+                W=lasagne.init.GlorotUniform())
+            self.layers.append(dense)
 
         if objective == lasagne.objectives.multiclass_hinge_loss:
             dense2 = lasagne.layers.DenseLayer(
-                dense1, num_units= output_size,
+                dense, num_units= output_size,
                 nonlinearity=lasagne.nonlinearities.linear)
             #self.layers.append(dense2)
         elif objective == lasagne.objectives.categorical_crossentropy:
             dense2 = lasagne.layers.DenseLayer(
-                dense1, num_units= output_size,
+                dense, num_units= output_size,
                 nonlinearity=lasagne.nonlinearities.softmax)
             #self.layers.append(dense2)
         else:
             assert False
         self.layers.append(dense2)
+        l_out = dense2
+
+        #print "dense2 shape: ", dense2.output_shape
 
         #Compute argmax of all timesteps?
-        l_reshape3 = lasagne.layers.ReshapeLayer(dense2, (-1, output_size, timesteps))
-        self.layers.append(l_reshape3)
+        #l_reshape3 = lasagne.layers.ReshapeLayer(dense2, (-1, output_size, timesteps))
+        #self.layers.append(l_reshape3)
 
-        l_out = lasagne.layers.SliceLayer(l_reshape3, indices=-1, axis=2)
+        #l_out = lasagne.layers.SliceLayer(l_reshape3, indices=-1, axis=2)
         #l_out = lasagne.layers.GlobalPoolLayer(l_reshape3, pool_function=T.max) #Using mean instead of max seems to improve val. accuracy.
         self.layers.append(l_out)
         #l_out = dense2
