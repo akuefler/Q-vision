@@ -182,7 +182,7 @@ class NeuralNet(object):
 
             print("EPOCH: {:,.1f}".format(epoch))
             print("  training loss:\t\t{:.6f}".format(train_loss / train_batches))
-            if (epoch+1) % 5 == 0:
+            if (epoch+1) % 2 == 0:
                 print "Train Accuracy: "
                 self.print_accuracy(X_train, y_train)
                 print "Validation Accuracy: "
@@ -662,10 +662,79 @@ class ConvRNN(NeuralNet):
 
         self.initiliaze(mode= 'classify')
 
+class TemporalConvNet(NeuralNet):
+    def __init__(self, height, width, channels, timesteps, hidden_size, output_size, batch_size,
+                 num_convpools= 2, num_filters= 5, reg= 0.0,
+                 objective= lasagne.objectives.multiclass_hinge_loss):
+        """
+        """
+        NeuralNet.__init__(self)
+        self.batch_size = batch_size
+
+        tensor5 = T.TensorType('float64', [False]*5)
+        self.x1 = tensor5('inputs')
+        self.y = T.lvector('targets')
+        self.layers = []
+
+        n_batch, n_steps, n_channels, width, height = (batch_size, timesteps, channels, width, height)
+        n_out_filters = 7
+        filter_shape = (3, 3)
+
+        l_in = lasagne.layers.InputLayer(
+             (None, n_steps, n_channels, width, height),
+             input_var= self.x1)
+        self.layers.append(l_in)
+
+        l_reshape1 = lasagne.layers.ReshapeLayer(l_in, (-1, l_in.output_shape[2], l_in.output_shape[3], l_in.output_shape[4]))
+        self.layers.append(l_reshape1)
+
+        conv = lasagne.layers.Conv2DLayer(
+            l_reshape1,
+            n_out_filters, filter_shape,
+            nonlinearity=lasagne.nonlinearities.elu, pad='same')
+        self.layers.append(conv)
+
+        pool = lasagne.layers.MaxPool2DLayer(conv, pool_size=4, stride=4)
+        self.layers.append(pool)
+
+        dense1 = lasagne.layers.DenseLayer(
+            pool, num_units= hidden_size,
+            nonlinearity=lasagne.nonlinearities.elu, #Rectify may be causing nans in cross entropy loss.
+            W=lasagne.init.GlorotUniform())
+        self.layers.append(dense1)
+
+        if objective == lasagne.objectives.multiclass_hinge_loss:
+            dense2 = lasagne.layers.DenseLayer(
+                dense1, num_units= output_size,
+                nonlinearity=lasagne.nonlinearities.linear)
+            #self.layers.append(dense2)
+        elif objective == lasagne.objectives.categorical_crossentropy:
+            dense2 = lasagne.layers.DenseLayer(
+                dense1, num_units= output_size,
+                nonlinearity=lasagne.nonlinearities.softmax)
+            #self.layers.append(dense2)
+        else:
+            assert False
+        self.layers.append(dense2)
+
+        #Compute argmax of all timesteps?
+        l_reshape3 = lasagne.layers.ReshapeLayer(dense2, (-1, output_size, timesteps))
+        self.layers.append(l_reshape3)
+
+        l_out = lasagne.layers.SliceLayer(l_reshape3, indices=-1, axis=2)
+        self.layers.append(l_out)
+
+        self.network = l_out
+
+        self.penalty = lasagne.regularization.regularize_network_params(self.layers, penalty= lasagne.regularization.l2) * reg
+        self.objective = objective
+
+        self.initiliaze(mode= 'sequence')
+
 
 class ConvLSTM(NeuralNet):
     def __init__(self, height, width, channels, timesteps, hidden_size, output_size, batch_size,
-                 num_convpools= 2, num_hiddense= 1, pre_conv= False,
+                 num_convpools= 2, num_hiddense= 1, pre_conv= False, use_batchnorm= False,
                  num_filters= 5, reg= 0.0, pool_param = 4,
                  objective= lasagne.objectives.multiclass_hinge_loss):
         """
@@ -706,9 +775,9 @@ class ConvLSTM(NeuralNet):
                 W=lasagne.init.GlorotUniform())
             self.layers.append(pre_conv)
 
-            #if use_batchnorm:
-                #pre_conv = lasagne.layers.BatchNormLayer(pre_conv)
-                #self.layers.append(pre_conv)
+            if use_batchnorm:
+                pre_conv = lasagne.layers.BatchNormLayer(pre_conv)
+                self.layers.append(pre_conv)
 
             prev_layer = lasagne.layers.NonlinearityLayer(pre_conv, nonlinearity=lasagne.nonlinearities.elu)
 
@@ -733,9 +802,9 @@ class ConvLSTM(NeuralNet):
                 W=lasagne.init.GlorotUniform())
             self.layers.append(conv)
 
-            #if use_batchnorm:
-                #conv = lasagne.layers.BatchNormLayer(conv)
-                #self.layers.append(conv)
+            if use_batchnorm:
+                conv = lasagne.layers.BatchNormLayer(conv)
+                self.layers.append(conv)
 
             nonlin_layer = lasagne.layers.NonlinearityLayer(conv, nonlinearity=lasagne.nonlinearities.elu)
 
