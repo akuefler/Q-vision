@@ -112,6 +112,9 @@ def loadRewardPlots(path, scaling_factor):
     ax3.plot(total_cum_val_rewards, c= 'r')
     ax3.plot(total_cum_rand_rewards, c= 'g')
 
+    print "Cumulative training reward: ", total_cum_train_rewards[-1]
+    print "Cumulative validation reward: ", total_cum_val_rewards[-1]
+
     plt.show()
 
 class Environment():
@@ -718,23 +721,29 @@ categories = ['Action','Affective','Art','BlackWhite','Cartoon','Fractal','Indoo
 
 #CAT_COUNT_TRAIN = {'Action':30, 'Object':30, 'Social':30, 'OutdoorManMade':30, 'Affective':30}
 #CAT_COUNT_VAL = {'Action':10, 'Object':10, 'Social':10, 'OutdoorManMade':10, 'Affective':10}
-CAT_COUNT_TRAIN = {'Action':15}
-CAT_COUNT_VAL = {'Action':5}
+
+#CAT_COUNT_TRAIN = {'Action':15}
+#CAT_COUNT_VAL = {'Action':5}
+
+#CAT_COUNT_TRAIN = {'Action':30}
+#CAT_COUNT_VAL = {'Action':10}
+
+CAT_COUNT_TRAIN = {'Action':30, 'Object': 30}
+CAT_COUNT_VAL = {'Action':10, 'Object':10}
 
 CAT_COUNT_PCA = {key:10 for key in categories}
 
-#loadRewardPlots('models/26-02-2016_14-04-45')
-#loadRewardPlots('models/26-02-2016_12-44-23')
-#loadRewardPlots('models/26-02-2016_12-19-02') #Convolutional Network
-#loadRewardPlots('models/26-02-2016_17-34-16_PCA')
-#loadRewardPlots('models/27-02-2016_13-48-50_PCA200')
-#loadRewardPlots('models/27-02-2016_14-20-08_PCA200') #The qualitative results look good.
-#loadRewardPlots('models/27-02-2016_17-20-20')
-#loadRewardPlots('models/27-02-2016_18-09-17_PCA200')
-#loadRewardPlots('models/27-02-2016_19-30-45_PCA400')
-#loadRewardPlots('models/27-02-2016_21-59-34')
-#loadRewardPlots('models/26-02-2016_12-19-02')
-#loadRewardPlots('models/28-02-2016_05-57-09')
+##March 7:
+#loadRewardPlots("models/03-03-2016_19-00-11", 3)
+#loadRewardPlots("models/07-03-2016_16-52-38", 3)
+#loadRewardPlots("models/07-03-2016_17-03-36", 3)
+
+#loadRewardPlots("models/07-03-2016_17-14-50", 3)
+#loadRewardPlots("models/07-03-2016_17-25-48", 3)
+#loadRewardPlots("models/07-03-2016_17-45-27", 3)
+#loadRewardPlots("models/07-03-2016_17-59-05", 3)
+loadRewardPlots("models/07-03-2016_18-13-53", 3)
+loadRewardPlots("models/07-03-2016_18-27-10", 3)
 
 def train_an_agent(phi, actor, critic, num_iters= 20, save= False, display= True):
     S_train = exactCAT(CAT_COUNT_TRAIN, 'train', size= (256, 256), asgray= True)
@@ -781,10 +790,12 @@ def load_an_agent(folder, name):
     elif arc == 'csn':
         phi = IdentityExtract((1, 2*RADIUS, 2*RADIUS))
         D = phi.D
-        hid_size = int(np.prod(D)*(4.0/3))
+        #hid_size = int(np.prod(D)*(4.0/3))
+        hid_size= 200
 
         reg = 1e-2
-        actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 2, output= 'sig', batch_size= c_batch_size*HORIZON, reg= reg)
+        #actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, pre_conv= True, hidden_size= hid_size, output_size= 2, output= 'sig', batch_size= c_batch_size*HORIZON, reg= reg)
+        actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, pre_conv= False, num_hiddense= 2, hidden_size= hid_size, output_size= 2, output= 'sig', batch_size= c_batch_size*HORIZON, reg= reg)
         age = Agent(env, actor= actor, phi = phi)
         #age.critic = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, hidden_size= hid_size, output_size= 1, output= 'euclid', batch_size= c_batch_size*HORIZON, reg= reg)
     else:
@@ -800,8 +811,13 @@ phi = IdentityExtract((1, 2*RADIUS, 2*RADIUS))
 c_batch_size = 10
 reg = 0.0
 hid_size= 200
-actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, pre_conv= False, num_hiddense= 2, hidden_size= hid_size, output_size= 2, output= 'sig', batch_size= c_batch_size*HORIZON, reg= reg)
-critic = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, pre_conv= False, num_hiddense= 2, hidden_size= hid_size, output_size= 1, output= 'euclid', batch_size= c_batch_size*HORIZON, reg= reg)
+
+#actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, pre_conv= False, num_hiddense= 2, hidden_size= hid_size, output_size= 2, merge= 'mul', output= 'sig', batch_size= c_batch_size*HORIZON, reg= reg)
+#critic = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, pre_conv= False, num_hiddense= 2, hidden_size= hid_size, output_size= 1, merge= 'mul', output= 'euclid', batch_size= c_batch_size*HORIZON, reg= reg)
+actor = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, pre_conv= False, num_hiddense= 3, hidden_size= hid_size, output_size= 2, merge= 'mul', output= 'sig', batch_size= c_batch_size*HORIZON, reg= reg)
+critic = ConvSplitNet(2*RADIUS, 2*RADIUS, 1, MEMORY**2, pre_conv= False, num_hiddense= 3, hidden_size= hid_size, output_size= 1, merge= 'mul', output= 'euclid', batch_size= c_batch_size*HORIZON, reg= reg)
+
+
 age = train_an_agent(phi, actor, critic, num_iters= 10, save= True, display= True)
 
 if True:
@@ -825,4 +841,4 @@ else:
     train_rewards = []
     for d in range(len(age.env.val_sample)):
         age.env.update(d, mode= 'val')
-        rewards, actions = age.simulate(mode= 'val', display= 'img', verbose= True)
+        rewards, actions = age.simulate(mode= 'val', display= 'fixmap', verbose= True)
